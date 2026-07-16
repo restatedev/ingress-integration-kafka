@@ -32,8 +32,8 @@ interface PartitionControl {
  * Lives entirely on its owning verticle's event loop, so its mutable state needs no locking.
  */
 class PartitionStream(
-    private val topic: String,
-    private val partition: Int,
+     topic: String,
+     partition: Int,
     private val settings: Settings,
     private val client: IngestionClient,
     private val control: PartitionControl,

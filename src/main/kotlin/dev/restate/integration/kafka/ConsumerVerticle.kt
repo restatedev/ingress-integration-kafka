@@ -29,15 +29,13 @@ class ConsumerVerticle(
 
   private val log = LogManager.getLogger(ConsumerVerticle::class.java)
 
-  private lateinit var grpcClient: GrpcClient
   private lateinit var ingestion: IngestionClient
   private lateinit var consumer: KafkaConsumer<String, ByteArray>
   private val partitions = HashMap<TopicPartition, PartitionStream>()
 
   override suspend fun start() {
-    grpcClient = buildGrpcClient()
-    ingestion = IngestionClient(grpcClient, appConfig.ingress)
-    consumer = KafkaConsumer.create<String, ByteArray>(vertx, appConfig.kafkaConsumerConfig)
+    ingestion = IngestionClient(vertx, appConfig.ingress)
+    consumer = KafkaConsumer.create(vertx, appConfig.kafkaConsumerConfig)
 
     consumer.handler { record ->
       val tp = TopicPartition(record.topic(), record.partition())
@@ -61,8 +59,8 @@ class ConsumerVerticle(
     log.info("stopping consumer instance ({} partitions)", partitions.size)
     partitions.values.forEach { it.close() }
     partitions.clear()
-    if (::consumer.isInitialized) runCatching { consumer.close().coAwait() }
-    if (::grpcClient.isInitialized) runCatching { grpcClient.close().coAwait() }
+    if (::consumer.isInitialized) {consumer.close().coAwait() }
+    if (::ingestion.isInitialized) {ingestion.close()}
   }
 
   private fun openPartition(tp: TopicPartition) {
@@ -128,15 +126,4 @@ class ConsumerVerticle(
           value = record.value(),
           headers = record.headers().map { it.key() to (it.value()?.bytes ?: ByteArray(0)) },
       )
-
-  private fun buildGrpcClient(): GrpcClient {
-    val options = HttpClientOptions().setProtocolVersion(HttpVersion.HTTP_2)
-    if (appConfig.ingress.tls) {
-      options.setSsl(true).isUseAlpn = true
-    } else {
-      // Plaintext gRPC uses HTTP/2 with prior knowledge (no h2c upgrade dance).
-      options.setHttp2ClearTextUpgrade(false)
-    }
-    return GrpcClient.client(vertx, options)
-  }
 }

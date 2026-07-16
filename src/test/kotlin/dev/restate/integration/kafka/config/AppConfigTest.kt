@@ -1,5 +1,6 @@
 package dev.restate.integration.kafka.config
 
+import io.vertx.core.VertxOptions
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
@@ -26,7 +27,7 @@ class AppConfigTest {
           this["KAFKA_FOO___BAR"] = "triple" // triple underscore -> dash
         }
 
-    val cfg = AppConfig.load(env, availableProcessors = 1)
+    val cfg = AppConfig.load(env)
 
     assertThat(cfg.kafkaConsumerConfig)
         .containsEntry("bootstrap.servers", "broker:9092")
@@ -42,14 +43,15 @@ class AppConfigTest {
     val env = baseEnv()
     env["KAFKA_AUTO_OFFSET_RESET"] = "earliest"
 
-    val cfg = AppConfig.load(env, availableProcessors = 4)
+    val cfg = AppConfig.load(env)
 
     assertThat(cfg.groupId).isEqualTo("my-group")
     assertThat(cfg.topics).containsExactly("orders")
     assertThat(cfg.targetService).isEqualTo("Greeter")
     assertThat(cfg.targetHandler).isEqualTo("greet")
     assertThat(cfg.ingress).isEqualTo(IngressEndpoint("localhost", 8080, false))
-    assertThat(cfg.consumerInstances).isEqualTo(8) // 2 * 4
+    // Defaults to Vert.x's event-loop pool size (one consumer instance per event loop).
+    assertThat(cfg.consumerInstances).isEqualTo(VertxOptions.DEFAULT_EVENT_LOOP_POOL_SIZE)
     assertThat(cfg.kafkaConsumerConfig)
         .containsEntry("bootstrap.servers", "broker:9092")
         .containsEntry("group.id", "my-group")
@@ -62,7 +64,7 @@ class AppConfigTest {
     env["KAFKA_ENABLE_AUTO_COMMIT"] = "true"
     env["KAFKA_VALUE_DESERIALIZER"] = "org.apache.kafka.common.serialization.StringDeserializer"
 
-    val cfg = AppConfig.load(env, availableProcessors = 1)
+    val cfg = AppConfig.load(env)
 
     assertThat(cfg.kafkaConsumerConfig)
         .containsEntry("enable.auto.commit", "false")
@@ -74,7 +76,7 @@ class AppConfigTest {
 
   @Test
   fun `does not forward KAFKA_TOPICS as a kafka property`() {
-    val cfg = AppConfig.load(baseEnv(), availableProcessors = 1)
+    val cfg = AppConfig.load(baseEnv())
     assertThat(cfg.kafkaConsumerConfig).doesNotContainKey("topics")
   }
 
@@ -82,7 +84,7 @@ class AppConfigTest {
   fun `parses multiple topics and trims whitespace`() {
     val env = baseEnv()
     env["KAFKA_TOPICS"] = " orders , payments ,,shipments "
-    val cfg = AppConfig.load(env, availableProcessors = 1)
+    val cfg = AppConfig.load(env)
     assertThat(cfg.topics).containsExactly("orders", "payments", "shipments")
   }
 
@@ -90,7 +92,7 @@ class AppConfigTest {
   fun `env overrides properties file`() {
     val file = mapOf("bootstrap.servers" to "file-broker:9092", "group.id" to "file-group")
     val env = baseEnv() // KAFKA_BOOTSTRAP_SERVERS=broker:9092, KAFKA_GROUP_ID=my-group
-    val cfg = AppConfig.load(env, fileConfig = file, availableProcessors = 1)
+    val cfg = AppConfig.load(env, fileConfig = file)
     assertThat(cfg.kafkaConsumerConfig).containsEntry("bootstrap.servers", "broker:9092")
     assertThat(cfg.groupId).isEqualTo("my-group")
   }
@@ -99,7 +101,7 @@ class AppConfigTest {
   fun `parses https ingress url as TLS with default port`() {
     val env = baseEnv()
     env["RESTATE_INGRESS_URL"] = "https://ingress.example.com"
-    val cfg = AppConfig.load(env, availableProcessors = 1)
+    val cfg = AppConfig.load(env)
     assertThat(cfg.ingress).isEqualTo(IngressEndpoint("ingress.example.com", 443, true))
   }
 
@@ -107,7 +109,7 @@ class AppConfigTest {
   fun `honours RESTATE_KAFKA_CONSUMER_INSTANCES override`() {
     val env = baseEnv()
     env["RESTATE_KAFKA_CONSUMER_INSTANCES"] = "3"
-    assertThat(AppConfig.load(env, availableProcessors = 8).consumerInstances).isEqualTo(3)
+    assertThat(AppConfig.load(env).consumerInstances).isEqualTo(3)
   }
 
   @Test

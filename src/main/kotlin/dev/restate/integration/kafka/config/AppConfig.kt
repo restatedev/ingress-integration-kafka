@@ -1,11 +1,9 @@
 package dev.restate.integration.kafka.config
 
+import dev.restate.integration.kafka.IngressEndpoint
 import io.vertx.core.VertxOptions
 import java.net.URI
 import java.util.Properties
-
-/** Where to reach the Restate ingestion gRPC endpoint. */
-data class IngressEndpoint(val host: String, val port: Int, val tls: Boolean)
 
 /**
  * Fully-resolved, validated runtime configuration.
@@ -16,16 +14,16 @@ data class IngressEndpoint(val host: String, val port: Int, val tls: Boolean)
  * user-facing, actionable message.
  */
 data class AppConfig(
-    /** Final Kafka consumer properties (Confluent-mapped env + file, with forced overrides). */
+  /** Final Kafka consumer properties (Confluent-mapped env + file, with forced overrides). */
     val kafkaConsumerConfig: Map<String, String>,
-    /** Topics this consumer group subscribes to (>= 1). */
+  /** Topics this consumer group subscribes to (>= 1). */
     val topics: List<String>,
-    /** Kafka consumer group id; also the leading component of every stream's producer_id. */
+  /** Kafka consumer group id; also the leading component of every stream's producer_id. */
     val groupId: String,
-    val ingress: IngressEndpoint,
-    val targetService: String,
-    val targetHandler: String,
-    /** Number of consumer verticle instances == event-loop pool size. */
+  val ingress: IngressEndpoint,
+  val targetService: String,
+  val targetHandler: String,
+  /** Number of consumer verticle instances == event-loop pool size. */
     val consumerInstances: Int,
 ) {
   companion object {
@@ -64,12 +62,10 @@ data class AppConfig(
      *
      * @param env process environment (inject a map in tests)
      * @param fileConfig base Kafka properties from an optional properties file (env overrides these)
-     * @param availableProcessors used to derive the default consumer-instance count
      */
     internal fun load(
         env: Map<String, String>,
         fileConfig: Map<String, String> = emptyMap(),
-        availableProcessors: Int = Runtime.getRuntime().availableProcessors(),
     ): AppConfig {
       // Map a `KAFKA_*` env var name to a Kafka property name using the Confluent Docker
       // convention: lower-cased, then a run of underscores collapses to a single separator by

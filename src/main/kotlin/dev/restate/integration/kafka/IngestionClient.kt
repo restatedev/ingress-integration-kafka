@@ -7,6 +7,9 @@ import dev.restate.ingestion.v1.Response
 import dev.restate.ingestion.v1.Settings
 import dev.restate.integration.kafka.config.IngressEndpoint
 import io.vertx.core.Future
+import io.vertx.core.Vertx
+import io.vertx.core.http.HttpClientOptions
+import io.vertx.core.http.HttpVersion
 import io.vertx.core.net.SocketAddress
 import io.vertx.grpc.client.GrpcClient
 import io.vertx.grpc.client.GrpcClientRequest
@@ -55,8 +58,13 @@ internal constructor(private val request: GrpcClientRequest<Request, Response>) 
   fun end(): Future<Void> = request.end()
 }
 
+/** Where to reach the Restate ingestion gRPC endpoint. */
+data class IngressEndpoint(val host: String, val port: Int, val tls: Boolean)
+
 /** Opens ingestion streams against a Restate ingress endpoint over a shared [GrpcClient]. */
-class IngestionClient(private val grpcClient: GrpcClient, endpoint: IngressEndpoint) {
+class IngestionClient(vertx: Vertx, endpoint: IngressEndpoint) {
+
+  private val grpcClient: GrpcClient = buildGrpcClient(vertx, endpoint)
 
   private val address: SocketAddress =
       SocketAddress.inetSocketAddress(endpoint.port, endpoint.host)
@@ -91,5 +99,20 @@ class IngestionClient(private val grpcClient: GrpcClient, endpoint: IngressEndpo
       response.hasAck() -> listener.onWindowUpdate(response.ack.increment)
       response.hasError() -> listener.onError(response.error)
     }
+  }
+
+   suspend fun close() {
+    grpcClient.close().coAwait()
+  }
+
+  private fun buildGrpcClient(vertx: Vertx, endpoint: IngressEndpoint): GrpcClient {
+    val options = HttpClientOptions().setProtocolVersion(HttpVersion.HTTP_2)
+    if (endpoint.tls) {
+      options.setSsl(true).isUseAlpn = true
+    } else {
+      // Plaintext gRPC uses HTTP/2 with prior knowledge (no h2c upgrade dance).
+      options.setHttp2ClearTextUpgrade(false)
+    }
+    return GrpcClient.client(vertx, options)
   }
 }
