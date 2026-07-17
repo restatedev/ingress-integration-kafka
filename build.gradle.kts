@@ -53,6 +53,9 @@ dependencies {
   // Virtual-time coroutine testing (runTest / TestScope) for the ProducerSession state machine.
   testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
   testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+  // End-to-end integration test against a real (branch-built) Restate + Kafka.
+  testImplementation("org.testcontainers:testcontainers:1.21.4")
+  testImplementation("org.testcontainers:kafka:1.21.4")
 }
 
 kotlin { jvmToolchain(25) }
@@ -80,7 +83,12 @@ protobuf {
   }
 }
 
-tasks.test { useJUnitPlatform() }
+tasks.test {
+  useJUnitPlatform()
+  // Ryuk (Testcontainers' reaper) is unreliable on rootless podman; the e2e test cleans up its own
+  // containers in a finally block, so disabling it keeps `./gradlew test` working there.
+  environment("TESTCONTAINERS_RYUK_DISABLED", "true")
+}
 
 // Container image built by Jib (no Docker daemon / Dockerfile needed).
 //   ./gradlew jibBuildTar   -> build to build/jib-image.tar (offline-verifiable)
