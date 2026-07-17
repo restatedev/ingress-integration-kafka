@@ -4,6 +4,7 @@ plugins {
   kotlin("jvm") version "2.3.21"
   id("com.google.protobuf") version "0.10.0"
   id("com.google.cloud.tools.jib") version "3.5.3"
+  id("com.diffplug.spotless") version "8.8.0"
   application
 }
 
@@ -26,6 +27,8 @@ dependencies {
   implementation("io.vertx:vertx-kafka-client")
   implementation("io.vertx:vertx-lang-kotlin")
   implementation("io.vertx:vertx-lang-kotlin-coroutines")
+  // ProducerSession uses coroutines (launch/CoroutineScope/delay) directly.
+  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
 
   // gRPC message (de)serialization + generated message types.
   implementation("com.google.protobuf:protobuf-java:$protobufVersion")
@@ -47,12 +50,23 @@ dependencies {
   testImplementation(platform("org.junit:junit-bom:6.1.2"))
   testImplementation("org.junit.jupiter:junit-jupiter")
   testImplementation("org.assertj:assertj-core:3.27.7")
-  // Used to stand up an in-process fake IngestionSvc server in tests.
-  testImplementation("io.vertx:vertx-grpc-server")
+  // Virtual-time coroutine testing (runTest / TestScope) for the ProducerSession state machine.
+  testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
   testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 kotlin { jvmToolchain(25) }
+
+spotless {
+  kotlin {
+    target("src/**/*.kt")
+    ktfmt()
+  }
+  kotlinGradle {
+    target("*.gradle.kts")
+    ktfmt()
+  }
+}
 
 application { mainClass.set("dev.restate.integration.kafka.MainKt") }
 

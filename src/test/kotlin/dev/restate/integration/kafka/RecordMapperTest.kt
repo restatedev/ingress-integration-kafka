@@ -8,7 +8,7 @@ class RecordMapperTest {
   @Test
   fun `maps key, value and kafka metadata headers`() {
     val record =
-        RecordMapper.toRecord(
+        DefaultRecordMapper.toRecord(
             topic = "orders",
             partition = 3,
             offset = 42,
@@ -30,15 +30,14 @@ class RecordMapperTest {
 
   @Test
   fun `null key omits the key and its header`() {
-    val record =
-        RecordMapper.toRecord("t", 0, 0, 0, key = null, value = "v".toByteArray())
+    val record = DefaultRecordMapper.toRecord("t", 0, 0, 0, key = null, value = "v".toByteArray())
     assertThat(record.hasKey()).isFalse()
     assertThat(record.additionalHeadersMap).doesNotContainKey("kafka.key")
   }
 
   @Test
   fun `null value (tombstone) becomes an empty payload`() {
-    val record = RecordMapper.toRecord("t", 0, 5, 0, key = "k", value = null)
+    val record = DefaultRecordMapper.toRecord("t", 0, 5, 0, key = "k", value = null)
     assertThat(record.payload.isEmpty).isTrue()
     assertThat(record.offset).isEqualTo(5L)
   }
@@ -46,7 +45,7 @@ class RecordMapperTest {
   @Test
   fun `propagates w3c trace context from headers`() {
     val record =
-        RecordMapper.toRecord(
+        DefaultRecordMapper.toRecord(
             "t",
             0,
             0,

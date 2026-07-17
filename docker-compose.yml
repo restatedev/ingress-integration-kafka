@@ -1,0 +1,102 @@
+name: ingress-integration-kafka
+
+# Local dev stack: Kafka (KRaft) + Restate + this Kafka->Restate ingress integration.
+#
+#   1. Build the app image into your local podman/docker daemon:
+#        ./gradlew jibDockerBuild        # -> ghcr.io/restatedev/ingress-integration-kafka:latest
+#   2. Bring the stack up:
+#        podman compose up -d            # (or: docker compose up -d)
+#   3. Register your Greeter deployment with Restate (it must expose Greeter/greet).
+#      If Greeter runs on the host (e.g. from IntelliJ on :9080):
+#        curl localhost:9070/deployments -H 'content-type: application/json' \
+#          -d '{"uri":"http://host.containers.internal:9080"}'
+#   4. Produce to `test-topic` from IntelliJ (bootstrap servers = localhost:9092).
+#      The message key becomes the VO/Workflow key; the value is the payload.
+#
+# Ports on the host: 9092 Kafka | 8080 Restate ingress | 9070 Restate admin.
+
+services:
+  broker:
+    image: confluentinc/cp-server:7.5.0
+    hostname: broker
+    container_name: broker
+    restart: unless-stopped
+    ports:
+      - "9092:9092"   # <- point IntelliJ / host producers here (localhost:9092)
+      - "9101:9101"   # JMX
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      # broker:29092 for in-network clients (the app), localhost:9092 for host clients (IntelliJ).
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
+      KAFKA_CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: 'broker:29092'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker:29093'
+      KAFKA_LISTENERS: 'PLAINTEXT://broker:29092,CONTROLLER://broker:29093,PLAINTEXT_HOST://0.0.0.0:9092'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      # Replace CLUSTER_ID with a unique base64 UUID using "bin/kafka-storage.sh random-uuid"
+      # See https://docs.confluent.io/kafka/operations-tools/kafka-tools.html#kafka-storage-sh
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      KAFKA_CONFLUENT_CLUSTER_LINK_METADATA_TOPIC_REPLICATION_FACTOR: 1
+
+  init-kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - broker
+    entrypoint: [ '/bin/sh', '-c' ]
+    command: |
+      "
+      # blocks until kafka is reachable
+      kafka-topics --bootstrap-server broker:29092 --list
+      echo -e 'Creating kafka topics'
+      kafka-topics --bootstrap-server broker:29092 --create --if-not-exists --topic test-topic --replication-factor 1 --partitions 3
+
+      echo -e 'Successfully created the following topics:'
+      kafka-topics --bootstrap-server broker:29092 --list
+      "
+
+  restate:
+    # NOTE: the ingestion gRPC service (restate.ingestion.IngestionSvc, restatedev/restate#5024)
+    # is still in development. `latest` may NOT have it yet -- pin this to a build/branch image
+    # that includes the ingestion API, otherwise the app's streams get UNIMPLEMENTED.
+    image: docker.io/restatedev/restate:latest
+    hostname: restate
+    container_name: restate
+    restart: unless-stopped
+    ports:
+      - "8080:8080"   # ingress (also serves the ingestion gRPC service)
+      - "9070:9070"   # admin (deployment registration, introspection)
+    volumes:
+      - restate-data:/restate-data
+
+  ingress-integration:
+    # Build locally first:  ./gradlew jibDockerBuild
+    image: ghcr.io/restatedev/ingress-integration-kafka:latest
+    container_name: ingress-integration-kafka
+    restart: unless-stopped
+    depends_on:
+      restate:
+        condition: service_started
+      init-kafka:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: 'broker:29092'
+      KAFKA_GROUP_ID: 'kafka-ingress'
+      KAFKA_TOPICS: 'test-topic'
+      # Start from the beginning of the topic on a fresh group so test messages aren't missed.
+      KAFKA_AUTO_OFFSET_RESET: 'earliest'
+      RESTATE_INGRESS_URL: 'http://restate:8080'
+      RESTATE_TARGET_SERVICE: 'Greeter'
+      RESTATE_TARGET_HANDLER: 'greet'
+
+volumes:
+  restate-data:

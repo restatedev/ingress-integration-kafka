@@ -1,5 +1,6 @@
-package dev.restate.integration.kafka.config
+package dev.restate.integration.kafka
 
+import dev.restate.integration.client.IngressEndpoint
 import io.vertx.core.VertxOptions
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -69,9 +70,13 @@ class AppConfigTest {
     assertThat(cfg.kafkaConsumerConfig)
         .containsEntry("enable.auto.commit", "false")
         .containsEntry(
-            "value.deserializer", "org.apache.kafka.common.serialization.ByteArrayDeserializer")
+            "value.deserializer",
+            "org.apache.kafka.common.serialization.ByteArrayDeserializer",
+        )
         .containsEntry(
-            "key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer")
+            "key.deserializer",
+            "org.apache.kafka.common.serialization.StringDeserializer",
+        )
   }
 
   @Test
@@ -138,10 +143,14 @@ class AppConfigTest {
 
   @Test
   fun `rejects missing target service and handler`() {
-    assertThatThrownBy { AppConfig.load(baseEnv().apply { remove("RESTATE_TARGET_SERVICE") }) }
+    assertThatThrownBy {
+          AppConfig.load(baseEnv().apply { remove("RESTATE_TARGET_SERVICE") })
+        }
         .isInstanceOf(IllegalArgumentException::class.java)
         .hasMessageContaining("RESTATE_TARGET_SERVICE")
-    assertThatThrownBy { AppConfig.load(baseEnv().apply { remove("RESTATE_TARGET_HANDLER") }) }
+    assertThatThrownBy {
+          AppConfig.load(baseEnv().apply { remove("RESTATE_TARGET_HANDLER") })
+        }
         .isInstanceOf(IllegalArgumentException::class.java)
         .hasMessageContaining("RESTATE_TARGET_HANDLER")
   }

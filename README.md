@@ -1,115 +1,96 @@
 # Restate Kafka ingress integration
 
-An external, opinionated Kafka consumer that streams records into [Restate](https://restate.dev)
-through the new **Ingress Integration API** (`restate.ingestion.IngestionSvc`, gRPC). It replaces
-the built-in librdkafka consumer: it runs as its own process/container, uses the official Apache
-Kafka Java client, and speaks a **pull-based** protocol so Restate controls the flow.
+A standalone service that turns Kafka records into [Restate](https://restate.dev) invocations. Run
+it as a container next to your Restate deployment.
 
-Built with Kotlin coroutines on **Vert.x 5** (Java 25).
+## What it does
 
-## How it works
-
-- One gRPC `Ingest` stream per **(topic, partition)**. Each stream is one Restate *producer*.
-- **Pull-based**: Restate sends flow-control *window* credits; the consumer only fetches from a
-  Kafka partition while it has credit, pausing it otherwise. Records beyond the current window are
-  briefly buffered (a Kafka poll returns batches), so backpressure is precise to ~one poll batch.
-- **Exactly-once into Restate**: an offset is committed back to Kafka only after Restate confirms
-  it (`last_committed`). Restate deduplicates by `(producer_id, offset)`, where
-  `producer_id = "<group.id>/<topic>/<partition>"`, so re-sends after a restart/reconnect are safe.
-- **Ordering**: per-partition order is preserved (records are sent in offset order).
-- **Concurrency**: one process runs *N* consumer instances (one per event loop). They share one
-  Kafka `group.id`, so Kafka distributes the partitions across them — scale by increasing instances
-  and/or partitions, or by running more containers.
-
-## Record mapping (parity with the built-in consumer)
-
-| Kafka | Restate `Record` |
-|-------|------------------|
-| key (UTF-8) | `key` (the Virtual Object / Workflow key) |
-| value (bytes) | `payload` (tombstone/null → empty payload) |
-| offset | `offset` |
-| topic / partition / offset / timestamp / key | `additional_headers`: `kafka.topic`, `kafka.partition`, `kafka.offset`, `kafka.timestamp`, `kafka.key` |
-| `traceparent` / `tracestate` headers | propagated to `traceparent` / `tracestate` |
-
-All topics route to a single target `service`/`handler`. No `content-type` header is set.
+- **Connects Kafka to Restate with no glue code** — each record on your topics triggers an
+  invocation of a handler you choose.
+- **Exactly-once processing** — every record is handled once, with no duplicates and no loss, even
+  across restarts, redeploys and Kafka rebalances.
+- **Keeps your ordering** — records from a partition are delivered in order.
+- **Scales with your load** — run more replicas and throughput scales with your Kafka partitions.
+- **Runs and scales independently of Restate** — deploy, upgrade and size it on its own, without
+  touching your Restate server.
+- **Resilient by default** — it reconnects through transient outages with backoff, and fails fast on
+  real misconfiguration so your orchestrator restarts it cleanly.
+- **Works with your Kafka** — any consumer setting, including SASL/TLS auth, passes straight through.
 
 ## Quickstart
 
 ```bash
 docker run --rm \
   -e KAFKA_BOOTSTRAP_SERVERS=broker:9092 \
-  -e KAFKA_GROUP_ID=my-consumer \
+  -e KAFKA_GROUP_ID=orders-to-restate \
   -e KAFKA_TOPICS=orders,payments \
   -e RESTATE_INGRESS_URL=http://restate:8080 \
   -e RESTATE_TARGET_SERVICE=OrderService \
-  -e RESTATE_TARGET_HANDLER=onEvent \
+  -e RESTATE_TARGET_HANDLER=onKafkaEvent \
   ghcr.io/restatedev/ingress-integration-kafka:latest
 ```
 
 ## Configuration
 
-Configuration comes from environment variables, optionally layered over a Kafka properties file
-(env wins).
+All configuration is via environment variables.
 
-### Kafka consumer properties — `KAFKA_*`
+### Required
 
-Any `KAFKA_*` variable becomes a Kafka consumer property using the Confluent Docker naming
-convention: lower-cased, then `___` → `-`, `__` → `_`, `_` → `.`.
+| Variable                  | Description                                                          |
+| ------------------------- | ------------------------------------------------------------------- |
+| `KAFKA_BOOTSTRAP_SERVERS` | Kafka bootstrap servers, e.g. `broker1:9092,broker2:9092`.          |
+| `KAFKA_GROUP_ID`          | Kafka consumer group id (also the prefix of the dedup producer id). |
+| `KAFKA_TOPICS`            | Comma-separated topics to subscribe to, e.g. `orders,payments`.     |
+| `RESTATE_INGRESS_URL`     | Restate ingestion endpoint, `http://host:port` or `https://host`.   |
+| `RESTATE_TARGET_SERVICE`  | Restate service to invoke for each record.                          |
+| `RESTATE_TARGET_HANDLER`  | Handler on that service to invoke.                                  |
 
-| Env | Kafka property |
-|-----|----------------|
-| `KAFKA_BOOTSTRAP_SERVERS` | `bootstrap.servers` (**required**) |
-| `KAFKA_GROUP_ID` | `group.id` (**required**) |
-| `KAFKA_AUTO_OFFSET_RESET` | `auto.offset.reset` (e.g. `earliest`) |
-| `KAFKA_SASL_JAAS_CONFIG` | `sasl.jaas.config` |
-| `KAFKA_SECURITY_PROTOCOL` | `security.protocol` |
-| `KAFKA_MAX_POLL_RECORDS` | `max.poll.records` (set to `1` for strict 1:1 pull) |
+### Optional
 
-`key.deserializer`, `value.deserializer` and `enable.auto.commit=false` are always managed by the
-integration and cannot be overridden.
+| Variable                              | Default       | Description                                                     |
+| ------------------------------------- | ------------- | --------------------------------------------------------------- |
+| `RESTATE_KAFKA_CONSUMER_INSTANCES`    | 2 × CPU cores | Consumer instances per process (partition parallelism).         |
+| `RESTATE_RETRY_INITIAL_INTERVAL_MS`   | `200`         | Initial reconnect backoff after a dropped ingestion stream.     |
+| `RESTATE_RETRY_MAX_INTERVAL_MS`       | `30000`       | Maximum reconnect backoff.                                      |
+| `RESTATE_RETRY_EXPONENTIATION_FACTOR` | `2.0`         | Backoff growth factor (≥ 1.0).                                 |
+| `RESTATE_RETRY_MAX_ATTEMPTS`          | unbounded     | Give up (and exit) after this many consecutive failed attempts. |
+| `CONFIG_FILE`                         | –             | Path to a `.properties` file of base Kafka config (env wins).   |
 
-### Restate wiring & runtime (dedicated, not forwarded to Kafka)
+Logging is Log4j2; point it at your own config with `-Dlog4j2.configurationFile=/path/log4j2.xml`.
 
-| Env | Meaning |
-|-----|---------|
-| `KAFKA_TOPICS` | Comma-separated list of topics to subscribe to (**required**) |
-| `RESTATE_INGRESS_URL` | Restate ingestion endpoint, e.g. `http://host:8080` (`https` ⇒ TLS) (**required**) |
-| `RESTATE_TARGET_SERVICE` | Restate service to invoke (**required**) |
-| `RESTATE_TARGET_HANDLER` | Restate handler to invoke (**required**) |
-| `RESTATE_KAFKA_CONSUMER_INSTANCES` | Number of consumer instances deployed (one per event loop). Default `2 × CPUs`. Set ≤ the topics' partition count. |
-| `CONFIG_FILE` | Path to a `.properties` file with base Kafka properties (env overrides it) |
+### Extra Kafka consumer settings
 
-The app runs on Vert.x's application launcher, so Vert.x itself is tunable via its `VERTX_*`
-environment variables (e.g. event-loop pool size), and shutdown is graceful on SIGTERM/SIGINT.
-Logging is Log4j2; override the bundled config with `LOG4J_CONFIGURATION_FILE=/path/log4j2.properties`
-(or `-Dlog4j2.configurationFile=...`).
+Any other `KAFKA_*` variable is forwarded to the Kafka consumer using the Confluent naming
+convention — lowercased, with underscore runs mapped to separators: single `_` → `.`, double
+`__` → `_`, triple `___` → `-`. For example `KAFKA_AUTO_OFFSET_RESET` → `auto.offset.reset`.
 
-On missing/invalid required configuration the process exits with a clear message (exit code `2`).
-A fatal misconfiguration reported by Restate (unknown service/handler) exits with code `1`; other
-errors (server shutting down, transient) reconnect with backoff.
-
-## Building & running locally
+A SASL/TLS setup:
 
 ```bash
-./gradlew build            # compile + tests
-./gradlew installDist      # produces build/install/ingress-integration-kafka/
-./gradlew run              # run under the Java 25 toolchain (provide the env vars above)
+-e KAFKA_SECURITY_PROTOCOL=SASL_SSL \
+-e KAFKA_SASL_MECHANISM=PLAIN \
+-e KAFKA_SASL_JAAS_CONFIG='org.apache.kafka.common.security.plain.PlainLoginModule required username="..." password="...";'
 ```
 
-The container image is built with [Jib](https://github.com/GoogleContainerTools/jib) — no
-Dockerfile or Docker daemon required:
+The deserializers and commit mode are fixed and cannot be overridden: keys are read as UTF-8
+strings, values as raw bytes, and offsets are committed manually after Restate confirms them.
+
+## Record mapping
+
+| Kafka                                        | Restate `Record`                                                                          |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| key (UTF-8)                                  | `key` — the Virtual Object / Workflow key (required by Restate for VO/Workflow targets)   |
+| value (bytes)                                | `payload` (a null value / tombstone → empty payload)                                      |
+| topic / partition / offset / timestamp / key | request headers `kafka.topic`, `kafka.partition`, `kafka.offset`, `kafka.timestamp`, `kafka.key` |
+| `traceparent` / `tracestate` headers         | propagated to `traceparent` / `tracestate`                                                |
+
+## Building the image
+
+Built with [Jib](https://github.com/GoogleContainerTools/jib) — no Dockerfile or Docker daemon
+required:
 
 ```bash
-./gradlew jib              # build and push to the registry (ghcr.io/restatedev/...)
 ./gradlew jibDockerBuild   # build into the local Docker/Podman daemon
-./gradlew jibBuildTar      # build to build/jib-image.tar (fully offline)
+./gradlew jibBuildTar      # build to build/jib-image.tar
+./gradlew jib              # build and push to the configured registry
 ```
-
-Requires the Java 25 toolchain to run the built scripts (`./gradlew run` uses it automatically).
-
-## Status
-
-Proof of concept. The Restate server side of the ingestion protocol
-([restatedev/restate#5024](https://github.com/restatedev/restate/pull/5024)) is still in
-development; this consumer is tested against an in-process fake `IngestionSvc` server. See
-`PLAN.md` for the design and roadmap.
