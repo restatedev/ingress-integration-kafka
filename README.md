@@ -71,6 +71,9 @@ sasl.mechanism=PLAIN
 sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="..." password="...";
 ```
 
+If your broker needs an auth plugin that isn't on the classpath (e.g. a cloud OAuth login handler),
+see [Adding an auth provider](#adding-an-auth-provider-or-any-extra-library).
+
 Commit mode and key/value deserializers are automatically configured.
 
 Logging is Log4j2; point it at your own config with `-Dlog4j2.configurationFile=/path/log4j2.xml`.
