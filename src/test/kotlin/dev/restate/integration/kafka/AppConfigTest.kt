@@ -14,8 +14,8 @@ class AppConfigTest {
           "KAFKA_GROUP_ID" to "my-group",
           "KAFKA_TOPICS" to "orders",
           "RESTATE_INGRESS_URL" to "http://localhost:8080",
-          "RESTATE_TARGET_SERVICE" to "Greeter",
-          "RESTATE_TARGET_HANDLER" to "greet",
+          "RESTATE_RECORD_MAPPER_SERVICE" to "Greeter",
+          "RESTATE_RECORD_MAPPER_HANDLER" to "greet",
       )
 
   @Test
@@ -47,12 +47,12 @@ class AppConfigTest {
     val cfg = AppConfig.load(env)
 
     assertThat(cfg.groupId).isEqualTo("my-group")
-    assertThat(cfg.topics).containsExactly("orders")
-    assertThat(cfg.targetService).isEqualTo("Greeter")
-    assertThat(cfg.targetHandler).isEqualTo("greet")
-    assertThat(cfg.ingress).isEqualTo(IngressEndpoint("localhost", 8080, false))
+    assertThat(cfg.restate.topics).containsExactly("orders")
+    assertThat(cfg.recordMapper.initialSettings().service).isEqualTo("Greeter")
+    assertThat(cfg.recordMapper.initialSettings().handler).isEqualTo("greet")
+    assertThat(cfg.restate.ingress).isEqualTo(IngressEndpoint("localhost", 8080, false))
     // Defaults to Vert.x's event-loop pool size (one consumer instance per event loop).
-    assertThat(cfg.consumerInstances).isEqualTo(VertxOptions.DEFAULT_EVENT_LOOP_POOL_SIZE)
+    assertThat(cfg.restate.consumerInstances).isEqualTo(VertxOptions.DEFAULT_EVENT_LOOP_POOL_SIZE)
     assertThat(cfg.kafkaConsumerConfig)
         .containsEntry("bootstrap.servers", "broker:9092")
         .containsEntry("group.id", "my-group")
@@ -90,7 +90,7 @@ class AppConfigTest {
     val env = baseEnv()
     env["KAFKA_TOPICS"] = " orders , payments ,,shipments "
     val cfg = AppConfig.load(env)
-    assertThat(cfg.topics).containsExactly("orders", "payments", "shipments")
+    assertThat(cfg.restate.topics).containsExactly("orders", "payments", "shipments")
   }
 
   @Test
@@ -107,14 +107,14 @@ class AppConfigTest {
     val env = baseEnv()
     env["RESTATE_INGRESS_URL"] = "https://ingress.example.com"
     val cfg = AppConfig.load(env)
-    assertThat(cfg.ingress).isEqualTo(IngressEndpoint("ingress.example.com", 443, true))
+    assertThat(cfg.restate.ingress).isEqualTo(IngressEndpoint("ingress.example.com", 443, true))
   }
 
   @Test
   fun `honours RESTATE_KAFKA_CONSUMER_INSTANCES override`() {
     val env = baseEnv()
     env["RESTATE_KAFKA_CONSUMER_INSTANCES"] = "3"
-    assertThat(AppConfig.load(env).consumerInstances).isEqualTo(3)
+    assertThat(AppConfig.load(env).restate.consumerInstances).isEqualTo(3)
   }
 
   @Test
@@ -138,21 +138,21 @@ class AppConfigTest {
     val env = baseEnv().apply { remove("KAFKA_TOPICS") }
     assertThatThrownBy { AppConfig.load(env) }
         .isInstanceOf(IllegalArgumentException::class.java)
-        .hasMessageContaining("KAFKA_TOPICS")
+        .hasMessageContaining("topics")
   }
 
   @Test
   fun `rejects missing target service and handler`() {
     assertThatThrownBy {
-          AppConfig.load(baseEnv().apply { remove("RESTATE_TARGET_SERVICE") })
+          AppConfig.load(baseEnv().apply { remove("RESTATE_RECORD_MAPPER_SERVICE") })
         }
         .isInstanceOf(IllegalArgumentException::class.java)
-        .hasMessageContaining("RESTATE_TARGET_SERVICE")
+        .hasMessageContaining("restate.record.mapper.service")
     assertThatThrownBy {
-          AppConfig.load(baseEnv().apply { remove("RESTATE_TARGET_HANDLER") })
+          AppConfig.load(baseEnv().apply { remove("RESTATE_RECORD_MAPPER_HANDLER") })
         }
         .isInstanceOf(IllegalArgumentException::class.java)
-        .hasMessageContaining("RESTATE_TARGET_HANDLER")
+        .hasMessageContaining("restate.record.mapper.handler")
   }
 
   @Test

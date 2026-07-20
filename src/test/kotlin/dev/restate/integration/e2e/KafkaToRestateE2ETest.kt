@@ -2,7 +2,6 @@ package dev.restate.integration.e2e
 
 import dev.restate.integration.kafka.AppConfig
 import dev.restate.integration.kafka.ConsumerVerticle
-import dev.restate.integration.kafka.DefaultRecordMapper
 import io.vertx.core.Vertx
 import java.net.URI
 import java.net.http.HttpClient
@@ -10,6 +9,10 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.util.Properties
 import java.util.concurrent.TimeUnit
+import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.toJavaDuration
 import org.apache.kafka.clients.admin.Admin
 import org.apache.kafka.clients.admin.AdminClientConfig
 import org.apache.kafka.clients.admin.NewTopic
@@ -25,10 +28,6 @@ import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.Network
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.utility.DockerImageName
-import kotlin.time.Clock
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.minutes
-import kotlin.time.toJavaDuration
 
 /**
  * Full end-to-end, all off published images (no local build required):
@@ -106,13 +105,13 @@ class KafkaToRestateE2ETest {
                   "KAFKA_TOPICS" to TOPIC,
                   "KAFKA_AUTO_OFFSET_RESET" to "earliest",
                   "RESTATE_INGRESS_URL" to ingressBase,
-                  "RESTATE_TARGET_SERVICE" to "Counter",
-                  "RESTATE_TARGET_HANDLER" to "add",
+                  "RESTATE_RECORD_MAPPER_SERVICE" to "Counter",
+                  "RESTATE_RECORD_MAPPER_HANDLER" to "add",
                   "RESTATE_KAFKA_CONSUMER_INSTANCES" to "1",
               )
           )
       vertx
-          .deployVerticle(ConsumerVerticle(config, DefaultRecordMapper))
+          .deployVerticle(ConsumerVerticle(config))
           .toCompletionStage()
           .toCompletableFuture()
           .get(30, TimeUnit.SECONDS)
@@ -146,7 +145,9 @@ class KafkaToRestateE2ETest {
     }
   }
 
-  /** Invoke the shared `Counter.get(key)` handler through the ingress; null if not yet answerable. */
+  /**
+   * Invoke the shared `Counter.get(key)` handler through the ingress; null if not yet answerable.
+   */
   private fun counterGet(ingressBase: String, key: String): Long? {
     val request =
         HttpRequest.newBuilder(URI.create("$ingressBase/Counter/$key/get"))
@@ -194,5 +195,4 @@ class KafkaToRestateE2ETest {
       }
     }
   }
-
 }

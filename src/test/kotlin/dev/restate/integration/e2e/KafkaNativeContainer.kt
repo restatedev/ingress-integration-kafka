@@ -6,9 +6,7 @@ import org.testcontainers.images.builder.Transferable
 import org.testcontainers.kafka.KafkaContainer
 import org.testcontainers.utility.DockerImageName
 
-/**
- * Copied from e2e repo
- */
+/** Copied from e2e repo */
 class KafkaNativeContainer :
     KafkaContainer(
         DockerImageName.parse("docker.io/apache/kafka-native:4.1.1")

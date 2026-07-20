@@ -26,14 +26,13 @@ fun main() {
       }
 
   log.info(
-      "starting {} consumer instance(s) -> {} target {}/{} at {}://{}:{}",
-      config.consumerInstances,
-      config.topics,
-      config.targetService,
-      config.targetHandler,
-      if (config.ingress.tls) "https" else "http",
-      config.ingress.host,
-      config.ingress.port,
+      "starting {} consumer instance(s) -> topics {} via {} at {}://{}:{}",
+      config.restate.consumerInstances,
+      config.restate.topics,
+      config.recordMapper.javaClass.simpleName,
+      if (config.restate.ingress.tls) "https" else "http",
+      config.restate.ingress.host,
+      config.restate.ingress.port,
   )
 
   VertxApplication(emptyArray(), ConsumerApplication(config)).launch()
@@ -44,7 +43,7 @@ private class ConsumerApplication(private val config: AppConfig) : VertxApplicat
   override fun beforeDeployingVerticle(context: HookContext) {
     // Deploy N consumer instances; Vert.x spreads them across event loops and Kafka spreads the
     // partitions across the instances.
-    context.deploymentOptions().instances = config.consumerInstances
+    context.deploymentOptions().instances = config.restate.consumerInstances
   }
 
   override fun verticleSupplier(): Supplier<out Deployable> = Supplier { ConsumerVerticle(config) }

@@ -1,13 +1,10 @@
 package dev.restate.integration.kafka
 
-import dev.restate.ingestion.v1.Record
-import dev.restate.ingestion.v1.Settings
 import dev.restate.integration.client.InboundStreamController
 import dev.restate.integration.client.IngestionClient
 import dev.restate.integration.client.ProducerSession
 import io.vertx.kafka.client.common.TopicPartition
 import io.vertx.kafka.client.consumer.KafkaConsumer
-import io.vertx.kafka.client.consumer.KafkaConsumerRecord
 import io.vertx.kafka.client.consumer.OffsetAndMetadata
 import io.vertx.kotlin.coroutines.CoroutineVerticle
 import io.vertx.kotlin.coroutines.coAwait
@@ -15,7 +12,7 @@ import org.apache.logging.log4j.LogManager
 
 /**
  * One deployed instance == one `KafkaConsumer` (group member) on one event loop. Deploy N instances
- * (see [AppConfig.consumerInstances]) to spread work across all event loops; Kafka distributes
+ * (see [RestateConfig.consumerInstances]) to spread work across all event loops; Kafka distributes
  * partitions across the instances and rebalances automatically.
  *
  * All of an instance's state runs on its single context: the consumer, its assigned
@@ -23,18 +20,17 @@ import org.apache.logging.log4j.LogManager
  */
 class ConsumerVerticle(
     private val appConfig: AppConfig,
-    private val recordMapper: RecordMapper = DefaultRecordMapper,
 ) : CoroutineVerticle() {
 
   private val log = LogManager.getLogger(ConsumerVerticle::class.java)
 
   private lateinit var ingestion: IngestionClient
-  private lateinit var consumer: KafkaConsumer<String, ByteArray>
+  private lateinit var consumer: KafkaConsumer<Any?, Any?>
   private val partitions = HashMap<TopicPartition, ProducerSession>()
 
   override suspend fun start() {
-    ingestion = IngestionClient.connect(vertx, appConfig.ingress)
-    consumer = KafkaConsumer.create(vertx, appConfig.kafkaConsumerConfig)
+    ingestion = IngestionClient.connect(vertx, appConfig.restate.ingress)
+    consumer = KafkaConsumer.create<Any, Any>(vertx, appConfig.kafkaConsumerConfig)
 
     consumer.handler { record ->
       val tp = TopicPartition(record.topic(), record.partition())
@@ -44,17 +40,17 @@ class ConsumerVerticle(
         // re-assignment.
         log.debug("dropping record for unassigned partition {}", tp)
       } else {
-        session.offer(toIngestionRecord(record))
+        session.offer(appConfig.recordMapper.toInvocation(record.record()))
       }
     }
     consumer.partitionsAssignedHandler { assigned -> assigned.forEach(::openPartition) }
     consumer.partitionsRevokedHandler { revoked -> revoked.forEach(::closePartition) }
     consumer.exceptionHandler { log.error("kafka consumer error", it) }
 
-    consumer.subscribe(appConfig.topics.toSet()).coAwait()
+    consumer.subscribe(appConfig.restate.topics.toSet()).coAwait()
     log.info(
         "consumer instance subscribed to {} as group '{}'",
-        appConfig.topics,
+        appConfig.restate.topics,
         appConfig.groupId,
     )
   }
@@ -70,18 +66,12 @@ class ConsumerVerticle(
 
   private fun openPartition(tp: TopicPartition) {
     if (partitions.containsKey(tp)) return
-    // The producer id is stamped by the stream; Settings carry only the target.
-    val settings =
-        Settings.newBuilder()
-            .setService(appConfig.targetService)
-            .setHandler(appConfig.targetHandler)
-            .build()
     val session =
         ProducerSession(
             client = ingestion,
             id = "${appConfig.groupId}/${tp.topic}/${tp.partition}",
             control = controlFor(tp),
-            retryPolicy = appConfig.retryPolicy,
+            retryPolicy = appConfig.restate.retryPolicy,
             listener =
                 object : ProducerSession.Listener {
                   override fun onSessionClosed() {
@@ -91,7 +81,7 @@ class ConsumerVerticle(
                 },
         )
     partitions[tp] = session
-    session.start(this, settings)
+    session.start(this, appConfig.recordMapper.initialSettings())
   }
 
   private fun closePartition(tp: TopicPartition) {
@@ -122,15 +112,4 @@ class ConsumerVerticle(
           }
         }
       }
-
-  private fun toIngestionRecord(record: KafkaConsumerRecord<String, ByteArray>): Record =
-      recordMapper.toRecord(
-          topic = record.topic(),
-          partition = record.partition(),
-          offset = record.offset(),
-          timestamp = record.timestamp(),
-          key = record.key(),
-          value = record.value(),
-          headers = record.headers().map { it.key() to (it.value()?.bytes ?: ByteArray(0)) },
-      )
 }
