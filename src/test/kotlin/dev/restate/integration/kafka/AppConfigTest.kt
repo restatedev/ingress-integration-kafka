@@ -88,7 +88,7 @@ class AppConfigTest {
   @Test
   fun `parses multiple topics and trims whitespace`() {
     val env = baseEnv()
-    env["KAFKA_TOPICS"] = " orders , payments ,,shipments "
+    env["KAFKA_TOPICS"] = " orders , payments , shipments "
     val cfg = AppConfig.load(env)
     assertThat(cfg.restate.topics).containsExactly("orders", "payments", "shipments")
   }

@@ -32,6 +32,10 @@ dependencies {
   // gRPC message (de)serialization + generated message types.
   implementation("com.google.protobuf:protobuf-java:$protobufVersion")
 
+  // Jackson for JSON-based record mappers (JsonDynamicTargetRecordMapper): JsonNode + JsonPointer.
+  // Vert.x ships jackson-core but leaves databind optional, so add it (aligned to Vert.x's 2.21.x).
+  implementation("com.fasterxml.jackson.core:jackson-databind:2.21.5")
+
   // The Vert.x gRPC codegen also emits a server stub (IngestionSvcGrpcService) that imports
   // io.vertx.grpc.server.*. We only run the client at runtime, so keep the server API
   // compile-only here (the generated service class is never loaded in production) and pull it

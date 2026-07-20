@@ -62,6 +62,10 @@ message Record {
     // from the Settings message.
     map<string, string> additional_headers = 9;
 
+    // Idempotency key for the invocation (Restate dedups on it). Local addition anticipating the
+    // upstream proto; see restatedev/restate#5024.
+    optional string idempotency_key = 10;
+
     bytes payload = 100;
 }
 
