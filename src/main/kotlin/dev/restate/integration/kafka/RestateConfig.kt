@@ -29,7 +29,8 @@ import org.apache.kafka.common.config.ConfigDef.Type
 class RestateConfig(props: Map<String, String>) :
     AbstractConfig(CONFIG_DEF, props, /* doLog= */ false) {
 
-  val ingress: IngressEndpoint = parseIngressUrl(getString(INGRESS_URL))
+  val ingress: IngressEndpoint =
+      parseIngressUrl(getString(INGRESS_URL)).copy(authToken = getPassword(AUTH_TOKEN)?.value())
   val topics: List<String> = getList(TOPICS).map { it.trim() }.filter { it.isNotEmpty() }
   val consumerInstances: Int = getInt(CONSUMER_INSTANCES)
   val retryPolicy: RetryPolicy =
@@ -56,6 +57,7 @@ class RestateConfig(props: Map<String, String>) :
 
   companion object {
     const val INGRESS_URL = "restate.ingress.url"
+    const val AUTH_TOKEN = "restate.auth.token"
     const val TOPICS = "topics"
     const val CONSUMER_INSTANCES = "restate.kafka.consumer.instances"
     const val RECORD_MAPPER_CLASS = "restate.record.mapper.class"
@@ -88,6 +90,13 @@ class RestateConfig(props: Map<String, String>) :
                 },
                 Importance.HIGH,
                 "Restate ingestion endpoint, e.g. http://localhost:8080 (https => TLS). Env: RESTATE_INGRESS_URL.",
+            )
+            .define(
+                AUTH_TOKEN,
+                Type.PASSWORD,
+                null,
+                Importance.MEDIUM,
+                "Bearer token sent as the Authorization header to the Restate ingress. Env: RESTATE_AUTH_TOKEN.",
             )
             .define(
                 TOPICS,

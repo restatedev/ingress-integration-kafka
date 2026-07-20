@@ -25,64 +25,108 @@ docker run --rm \
   -e KAFKA_GROUP_ID=orders-to-restate \
   -e KAFKA_TOPICS=orders,payments \
   -e RESTATE_INGRESS_URL=http://restate:8080 \
-  -e RESTATE_TARGET_SERVICE=OrderService \
-  -e RESTATE_TARGET_HANDLER=onKafkaEvent \
+  -e RESTATE_RECORD_MAPPER_SERVICE=OrderService \
+  -e RESTATE_RECORD_MAPPER_HANDLER=onKafkaEvent \
   ghcr.io/restatedev/ingress-integration-kafka:latest
 ```
 
 ## Configuration
 
-All configuration is via environment variables.
+Configure via environment variables or a `.properties` file (configured via `CONFIG_FILE` env).
 
-### Required
+### 1. Kafka, topics, parallelism & the Restate client
 
-| Variable                  | Description                                                          |
-| ------------------------- | ------------------------------------------------------------------- |
-| `KAFKA_BOOTSTRAP_SERVERS` | Kafka bootstrap servers, e.g. `broker1:9092,broker2:9092`.          |
-| `KAFKA_GROUP_ID`          | Kafka consumer group id (also the prefix of the dedup producer id). |
-| `KAFKA_TOPICS`            | Comma-separated topics to subscribe to, e.g. `orders,payments`.     |
-| `RESTATE_INGRESS_URL`     | Restate ingestion endpoint, `http://host:port` or `https://host`.   |
-| `RESTATE_TARGET_SERVICE`  | Restate service to invoke for each record.                          |
-| `RESTATE_TARGET_HANDLER`  | Handler on that service to invoke.                                  |
+**Required**
 
-### Optional
+| Env                       | Property key          | Description                                                         |
+|---------------------------|-----------------------|---------------------------------------------------------------------|
+| `KAFKA_BOOTSTRAP_SERVERS` | `bootstrap.servers`   | Kafka bootstrap servers, e.g. `broker1:9092,broker2:9092`.          |
+| `KAFKA_GROUP_ID`          | `group.id`            | Kafka consumer group id (also the prefix of the dedup producer id). |
+| `KAFKA_TOPICS`            | `topics`              | Comma-separated topics to subscribe to, e.g. `orders,payments`.     |
+| `RESTATE_INGRESS_URL`     | `restate.ingress.url` | Restate ingestion endpoint, `http://host:port` or `https://host`.   |
 
-| Variable                              | Default       | Description                                                     |
-| ------------------------------------- | ------------- | --------------------------------------------------------------- |
-| `RESTATE_KAFKA_CONSUMER_INSTANCES`    | 2 × CPU cores | Consumer instances per process (partition parallelism).         |
-| `RESTATE_RETRY_INITIAL_INTERVAL_MS`   | `200`         | Initial reconnect backoff after a dropped ingestion stream.     |
-| `RESTATE_RETRY_MAX_INTERVAL_MS`       | `30000`       | Maximum reconnect backoff.                                      |
-| `RESTATE_RETRY_EXPONENTIATION_FACTOR` | `2.0`         | Backoff growth factor (≥ 1.0).                                 |
-| `RESTATE_RETRY_MAX_ATTEMPTS`          | unbounded     | Give up (and exit) after this many consecutive failed attempts. |
-| `CONFIG_FILE`                         | –             | Path to a `.properties` file of base Kafka config (env wins).   |
+**Optional**
 
-Logging is Log4j2; point it at your own config with `-Dlog4j2.configurationFile=/path/log4j2.xml`.
+| Env                                   | Property key                          | Default              | Description                                                     |
+|---------------------------------------|---------------------------------------|----------------------|-----------------------------------------------------------------|
+| `CONFIG_FILE`                         | – (env only)                          | –                    | Path to a `.properties` file of base config (env wins).         |
+| `RESTATE_AUTH_TOKEN`                  | `restate.auth.token`                  | –                    | Bearer token for the Restate ingress (for Cloud and BYOC).      |
+| `RESTATE_KAFKA_CONSUMER_INSTANCES`    | `restate.kafka.consumer.instances`    | 2 × CPU cores        | Consumer instances per process (partition parallelism).         |
+| `RESTATE_RETRY_INITIAL_INTERVAL_MS`   | `restate.retry.initial.interval.ms`   | `200`                | Initial reconnect backoff after a dropped ingestion stream.     |
+| `RESTATE_RETRY_MAX_INTERVAL_MS`       | `restate.retry.max.interval.ms`       | `30000`              | Maximum reconnect backoff.                                      |
+| `RESTATE_RETRY_EXPONENTIATION_FACTOR` | `restate.retry.exponentiation.factor` | `2.0`                | Backoff growth factor (≥ 1.0).                                  |
+| `RESTATE_RETRY_MAX_ATTEMPTS`          | `restate.retry.max.attempts`          | unbounded            | Give up (and exit) after this many consecutive failed attempts. |
+| `RESTATE_RECORD_MAPPER_CLASS`         | `restate.record.mapper.class`         | `StaticRecordMapper` | The `RecordMapper` class to load (see below).                   |
 
-### Extra Kafka consumer settings
-
-Any other `KAFKA_*` variable is forwarded to the Kafka consumer using the Confluent naming
-convention — lowercased, with underscore runs mapped to separators: single `_` → `.`, double
-`__` → `_`, triple `___` → `-`. For example `KAFKA_AUTO_OFFSET_RESET` → `auto.offset.reset`.
+**Extra Kafka consumer settings.** Any other `KAFKA_*` variable is forwarded to the Kafka consumer
+using the Confluent naming convention — lowercased, with underscore runs mapped to separators:
+single `_` → `.`, double `__` → `_`, triple `___` → `-`. For example `KAFKA_SECURITY_PROTOCOL` →
+`security.protocol`.
 
 A SASL/TLS setup:
 
-```bash
--e KAFKA_SECURITY_PROTOCOL=SASL_SSL \
--e KAFKA_SASL_MECHANISM=PLAIN \
--e KAFKA_SASL_JAAS_CONFIG='org.apache.kafka.common.security.plain.PlainLoginModule required username="..." password="...";'
+```properties
+security.protocol=SASL_SSL
+sasl.mechanism=PLAIN
+sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="..." password="...";
 ```
 
-The deserializers and commit mode are fixed and cannot be overridden: keys are read as UTF-8
-strings, values as raw bytes, and offsets are committed manually after Restate confirms them.
+Commit mode and key/value deserializers are automatically configured.
 
-## Record mapping
+Logging is Log4j2; point it at your own config with `-Dlog4j2.configurationFile=/path/log4j2.xml`.
 
-| Kafka                                        | Restate `Record`                                                                          |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| key (UTF-8)                                  | `key` — the Virtual Object / Workflow key (required by Restate for VO/Workflow targets)   |
-| value (bytes)                                | `payload` (a null value / tombstone → empty payload)                                      |
-| topic / partition / offset / timestamp / key | request headers `kafka.topic`, `kafka.partition`, `kafka.offset`, `kafka.timestamp`, `kafka.key` |
-| `traceparent` / `tracestate` headers         | propagated to `traceparent` / `tracestate`                                                |
+### 2. Record mapper
+
+The record mapper turns each Kafka record into a Restate invocation (target service/handler, key,
+payload, …). Pick the implementation with `RESTATE_RECORD_MAPPER_CLASS`, then configure it under `RESTATE_RECORD_MAPPER_*`:
+
+#### Static record mapper (default)
+
+Every record goes to the same service/handler.
+The Kafka key (when available) becomes the VO/Workflow key and the value becomes the payload.
+
+| Env                             | Property key                    | Required | Description                        |
+|---------------------------------|---------------------------------|----------|------------------------------------|
+| `RESTATE_RECORD_MAPPER_SERVICE` | `restate.record.mapper.service` | yes      | Restate service to invoke.         |
+| `RESTATE_RECORD_MAPPER_HANDLER` | `restate.record.mapper.handler` | yes      | Handler on that service to invoke. |
+
+| Kafka                                        | Restate `Record`                                                                         |
+|----------------------------------------------|------------------------------------------------------------------------------------------|
+| key (UTF-8)                                  | `key` — the Virtual Object / Workflow key (required by Restate for VO/Workflow targets)  |
+| value (bytes)                                | `payload` (a null value / tombstone → empty payload)                                     |
+| topic / partition / offset / timestamp / key | headers `kafka.topic`, `kafka.partition`, `kafka.offset`, `kafka.timestamp`, `kafka.key` |
+| `traceparent` / `tracestate` headers         | propagated to `traceparent` / `tracestate`                                               |
+
+#### JSON dynamic-target mapper
+
+Parses each record value as JSON and derives the target (and optional fields) *per record*. Enable
+it with:
+
+```properties
+restate.record.mapper.class=dev.restate.integration.kafka.JsonDynamicTargetRecordMapper
+```
+
+Each field is configured by setting **exactly one** of three sub-keys:
+
+| Sub-key                   | Source                                                                                          |
+|---------------------------|-------------------------------------------------------------------------------------------------|
+| `<field>.value=<literal>` | a static value                                                                                  |
+| `<field>.fromkey=true`    | the Kafka record key                                                                            |
+| `<field>.pointer=/a/b`    | a value read from the JSON payload via a [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901) |
+
+Fields: `service` (required), `handler` (required), `key`, `idempotencykey`, `scope`, `limitkey`.
+
+The payload is the record JSON value, and trace context propagates as above. 
+
+Example:
+
+```properties
+restate.record.mapper.class=dev.restate.integration.kafka.JsonDynamicTargetRecordMapper
+restate.record.mapper.service.value=OrderService
+restate.record.mapper.handler.pointer=/type
+restate.record.mapper.key.pointer=/customerId
+restate.record.mapper.idempotencykey.pointer=/eventId
+```
 
 ## Building the image
 

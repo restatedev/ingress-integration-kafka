@@ -33,7 +33,7 @@ class JsonDynamicTargetRecordMapperTest {
             "service.value" to "OrderService",
             "handler.pointer" to "/type",
             "key.fromkey" to "true",
-            "idempotency.key.pointer" to "/id",
+            "idempotencykey.pointer" to "/id",
             "scope.value" to "orders",
         )
     // Static fields are Settings defaults, not repeated per record.
