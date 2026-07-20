@@ -122,9 +122,13 @@ Example:
 
 ```properties
 restate.record.mapper.class=dev.restate.integration.kafka.JsonDynamicTargetRecordMapper
-restate.record.mapper.service.value=OrderService
+# Send all records to the Order
+restate.record.mapper.service.value=Order
+# Use the "type" field to determine the handler
 restate.record.mapper.handler.pointer=/type
+# Use the "customerId" field as the virtual object key
 restate.record.mapper.key.pointer=/customerId
+# Use the "eventId" field as the idempotency key
 restate.record.mapper.idempotencykey.pointer=/eventId
 ```
 
