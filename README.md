@@ -132,6 +132,55 @@ restate.record.mapper.key.pointer=/customerId
 restate.record.mapper.idempotencykey.pointer=/eventId
 ```
 
+## Adding an auth provider (or any extra library)
+
+Some brokers need an auth plugin that isn't on the image's classpath, e.g. Google Cloud Managed
+Service for Apache Kafka uses SASL/OAUTHBEARER with a login-callback class shipped in
+`managed-kafka-auth-login-handler`. You can layer it on without rebuilding from source.
+
+Example:
+
+```dockerfile
+# 1. Resolve the auth library JAR + its transitive deps into a folder.
+FROM maven:3-eclipse-temurin-21 AS auth
+WORKDIR /build
+COPY <<'EOF' pom.xml
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>x</groupId><artifactId>x</artifactId><version>1</version>
+  <dependencies>
+    <dependency>
+      <groupId>com.google.cloud.hosted.kafka</groupId>
+      <artifactId>managed-kafka-auth-login-handler</artifactId>
+      <version>1.0.6</version>
+    </dependency>
+  </dependencies>
+</project>
+EOF
+RUN mvn -q -DincludeScope=runtime -DoutputDirectory=/libs dependency:copy-dependencies
+
+# 2. Layer them onto the ingress image and add the folder to Jib's computed classpath.
+FROM ghcr.io/restatedev/ingress-integration-kafka:latest
+COPY --from=auth /libs/ /app/extra-libs/
+RUN sed -i 's#$#:/app/extra-libs/*#' /app/jib-classpath-file
+```
+
+Then configure the handler like any other Kafka setting (env or properties file):
+
+```properties
+security.protocol=SASL_SSL
+sasl.mechanism=OAUTHBEARER
+sasl.login.callback.handler.class=com.google.cloud.hosted.kafka.auth.GcpLoginCallbackHandler
+sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required;
+```
+
+The handler authenticates with Application Default Credentials, so run the container with a GCP
+identity, Workload Identity on GKE, or mount a service-account key and set
+`GOOGLE_APPLICATION_CREDENTIALS`.
+
+The same pattern works for any auth plugin (AWS MSK IAM, Azure Event Hubs, …): resolve its jars,
+drop them in `/app/extra-libs/`, and set the matching `security.protocol` / `sasl.*` config.
+
 ## Building the image
 
 Built with [Jib](https://github.com/GoogleContainerTools/jib) — no Dockerfile or Docker daemon
