@@ -6,12 +6,13 @@ name: ingress-integration-kafka
 #        ./gradlew jibDockerBuild        # -> ghcr.io/restatedev/ingress-integration-kafka:latest
 #   2. Bring the stack up:
 #        podman compose up -d            # (or: docker compose up -d)
-#   3. Register your Greeter deployment with Restate (it must expose Greeter/greet).
-#      If Greeter runs on the host (e.g. from IntelliJ on :9080):
+#   3. Register the bundled test-services deployment with Restate (exposes the Counter VO):
 #        curl localhost:9070/deployments -H 'content-type: application/json' \
-#          -d '{"uri":"http://host.containers.internal:9080"}'
+#          -d '{"uri":"http://test-services:9080"}'
 #   4. Produce to `test-topic` from IntelliJ (bootstrap servers = localhost:9092).
-#      The message key becomes the VO/Workflow key; the value is the payload.
+#      The message key becomes the VO/Workflow key; the value is the payload -- for Counter/add
+#      that's a JSON number, e.g. key `user-1` value `5`. Then read it back:
+#        curl localhost:8080/Counter/user-1/get -H 'content-type: application/json'
 #
 # Ports on the host: 9092 Kafka | 8080 Restate ingress | 9070 Restate admin.
 
@@ -78,6 +79,16 @@ services:
     volumes:
       - restate-data:/restate-data
 
+  # Target Restate service invoked by ingested records: the Java SDK test-services image, running
+  # only the Counter virtual object. Register it with Restate (see step 3 above).
+  test-services:
+    image: ghcr.io/restatedev/test-services-java:main
+    hostname: test-services
+    container_name: test-services
+    restart: unless-stopped
+    environment:
+      SERVICES: 'Counter'
+
   ingress-integration:
     # Build locally first:  ./gradlew jibDockerBuild
     image: ghcr.io/restatedev/ingress-integration-kafka:latest
@@ -95,8 +106,8 @@ services:
       # Start from the beginning of the topic on a fresh group so test messages aren't missed.
       KAFKA_AUTO_OFFSET_RESET: 'earliest'
       RESTATE_INGRESS_URL: 'http://restate:8080'
-      RESTATE_TARGET_SERVICE: 'Greeter'
-      RESTATE_TARGET_HANDLER: 'greet'
+      RESTATE_TARGET_SERVICE: 'Counter'
+      RESTATE_TARGET_HANDLER: 'add'
 
 volumes:
   restate-data:

@@ -15,7 +15,6 @@ version = "1.0-SNAPSHOT"
 repositories { mavenCentral() }
 
 val vertxVersion = "5.1.5"
-// Must match the protobuf-java version that Vert.x 5.1.5 depends on (see vertx-grpc-aggregator).
 val protobufVersion = "4.29.3"
 
 dependencies {
@@ -50,12 +49,10 @@ dependencies {
   testImplementation(platform("org.junit:junit-bom:6.1.2"))
   testImplementation("org.junit.jupiter:junit-jupiter")
   testImplementation("org.assertj:assertj-core:3.27.7")
-  // Virtual-time coroutine testing (runTest / TestScope) for the ProducerSession state machine.
   testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
   testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-  // End-to-end integration test against a real (branch-built) Restate + Kafka.
-  testImplementation("org.testcontainers:testcontainers:1.21.4")
-  testImplementation("org.testcontainers:kafka:1.21.4")
+  testImplementation("org.testcontainers:testcontainers:2.0.4")
+  testImplementation("org.testcontainers:testcontainers-kafka:2.0.4")
 }
 
 kotlin { jvmToolchain(25) }
