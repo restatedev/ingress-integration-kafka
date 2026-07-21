@@ -42,7 +42,7 @@ interface IngestionStream {
      * The stream became writable again — the window was replenished or the transport drained —
      * after [isWritable] had gone false. Resume writing.
      */
-    fun onWritable()
+    fun onWritable(currentBudget: Long)
 
     /** The response stream ended cleanly ([cause] null) or failed ([cause] non-null). */
     fun onClose(cause: IngestionStreamException?)

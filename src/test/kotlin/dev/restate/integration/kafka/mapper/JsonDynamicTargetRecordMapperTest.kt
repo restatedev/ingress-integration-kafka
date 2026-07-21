@@ -43,7 +43,9 @@ class JsonDynamicTargetRecordMapperTest {
     assertThat(settings.hasHandler()).isFalse() // handler is dynamic
 
     val invocation =
-        m.toInvocation(record(key = "cust-1", value = """{"type":"create","id":"evt-9","amount":5}"""))
+        m.toInvocation(
+            record(key = "cust-1", value = """{"type":"create","id":"evt-9","amount":5}""")
+        )
 
     // Dynamic fields are per-record overrides.
     assertThat(invocation.handler).isEqualTo("create")
@@ -113,7 +115,8 @@ class JsonDynamicTargetRecordMapperTest {
                         "traceparent" to "00-abc-01".toByteArray(),
                         "tracestate" to "s=1".toByteArray(),
                     ),
-            ))
+            )
+        )
     assertThat(invocation.traceparent).isEqualTo("00-abc-01")
     assertThat(invocation.tracestate).isEqualTo("s=1")
   }

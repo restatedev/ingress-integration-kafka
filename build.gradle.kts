@@ -17,6 +17,10 @@ repositories { mavenCentral() }
 val vertxVersion = "5.1.5"
 val protobufVersion = "4.29.3"
 
+// Silence the JDK 24+ "sun.misc.Unsafe::... has been called" warnings: protobuf-java still uses
+// Unsafe for fast (de)serialization. `allow` keeps it working without the per-call-site warning.
+val runtimeJvmArgs = listOf("--sun-misc-unsafe-memory-access=allow")
+
 dependencies {
   implementation(platform("io.vertx:vertx-stack-depchain:$vertxVersion"))
 
@@ -26,6 +30,14 @@ dependencies {
   implementation("io.vertx:vertx-kafka-client")
   implementation("io.vertx:vertx-lang-kotlin")
   implementation("io.vertx:vertx-lang-kotlin-coroutines")
+
+  // Metrics: Vert.x Micrometer integration (event loops, HTTP/2 client to Restate, embedded
+  // Prometheus scrape server) backed by a Prometheus registry. micrometer-registry-prometheus
+  // transitively brings micrometer-core, which carries the KafkaClientMetrics + JVM binders.
+  // vertx-micrometer-metrics is BOM-managed; the registry is not, so pin it to the same Micrometer
+  // version Vert.x 5.1.5 resolves (io.micrometer:micrometer-core:1.16.6) to keep them aligned.
+  implementation("io.vertx:vertx-micrometer-metrics")
+  implementation("io.micrometer:micrometer-registry-prometheus:1.16.6")
   // ProducerSession uses coroutines (launch/CoroutineScope/delay) directly.
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
 
@@ -72,7 +84,11 @@ spotless {
   }
 }
 
-application { mainClass.set("dev.restate.integration.kafka.MainKt") }
+application {
+  mainClass.set("dev.restate.integration.kafka.MainKt")
+  // Applies to `./gradlew run` and the installDist launch script (Jib sets its own flags below).
+  applicationDefaultJvmArgs = runtimeJvmArgs
+}
 
 protobuf {
   protoc { artifact = "com.google.protobuf:protoc:$protobufVersion" }
@@ -110,5 +126,10 @@ jib {
     image = "ghcr.io/restatedev/ingress-integration-kafka"
     tags = setOf("latest", version.toString())
   }
-  container { mainClass = "dev.restate.integration.kafka.MainKt" }
+  container {
+    mainClass = "dev.restate.integration.kafka.MainKt"
+    jvmFlags = runtimeJvmArgs
+    // Prometheus scrape endpoint (see RESTATE_METRICS_PORT); informational, does not publish it.
+    ports = listOf("9464")
+  }
 }

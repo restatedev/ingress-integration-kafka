@@ -10,8 +10,10 @@ import io.vertx.core.http.HttpVersion
 import io.vertx.grpc.client.GrpcClient
 import io.vertx.kotlin.coroutines.coAwait
 
-internal class IngestionClientImpl(private val grpcClient: GrpcClient, endpoint: IngressEndpoint) :
-    IngestionClient {
+internal class IngestionClientImpl(
+    private val grpcClient: GrpcClient,
+    endpoint: IngressEndpoint,
+) : IngestionClient {
 
   private val authToken = endpoint.authToken
 
@@ -24,7 +26,12 @@ internal class IngestionClientImpl(private val grpcClient: GrpcClient, endpoint:
       request.headers().set("Authorization", "Bearer $authToken")
     }
 
-    val stream = IngestionStreamImpl(request, producerId, listener)
+    val stream =
+        IngestionStreamImpl(
+            request,
+            producerId,
+            listener,
+        )
     request.response().onComplete { ar ->
       if (ar.succeeded()) {
         val response = ar.result()
@@ -73,8 +80,14 @@ internal class IngestionClientImpl(private val grpcClient: GrpcClient, endpoint:
   }
 
   companion object {
-    fun connect(vertx: Vertx, endpoint: IngressEndpoint): IngestionClientImpl =
-        IngestionClientImpl(buildGrpcClient(vertx, endpoint), endpoint)
+    fun connect(
+        vertx: Vertx,
+        endpoint: IngressEndpoint,
+    ): IngestionClientImpl =
+        IngestionClientImpl(
+            buildGrpcClient(vertx, endpoint),
+            endpoint,
+        )
 
     private fun buildGrpcClient(vertx: Vertx, endpoint: IngressEndpoint): GrpcClient {
       val httpOptions = HttpClientOptions().setProtocolVersion(HttpVersion.HTTP_2)

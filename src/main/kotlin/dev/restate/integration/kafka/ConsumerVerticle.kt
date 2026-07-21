@@ -3,6 +3,8 @@ package dev.restate.integration.kafka
 import dev.restate.integration.client.InboundStreamController
 import dev.restate.integration.client.IngestionClient
 import dev.restate.integration.client.ProducerSession
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.binder.kafka.KafkaClientMetrics
 import io.vertx.kafka.client.common.TopicPartition
 import io.vertx.kafka.client.consumer.KafkaConsumer
 import io.vertx.kafka.client.consumer.OffsetAndMetadata
@@ -20,6 +22,7 @@ import org.apache.logging.log4j.LogManager
  */
 class ConsumerVerticle(
     private val appConfig: AppConfig,
+    private val registry: MeterRegistry? = null,
 ) : CoroutineVerticle() {
 
   private val log = LogManager.getLogger(ConsumerVerticle::class.java)
@@ -27,10 +30,15 @@ class ConsumerVerticle(
   private lateinit var ingestion: IngestionClient
   private lateinit var consumer: KafkaConsumer<Any?, Any?>
   private val partitions = HashMap<TopicPartition, ProducerSession>()
+  // Native Kafka consumer metrics binder (kafka.consumer.*); closed with the consumer.
+  private var kafkaClientMetrics: AutoCloseable? = null
 
   override suspend fun start() {
     ingestion = IngestionClient.connect(vertx, appConfig.restate.ingress)
     consumer = KafkaConsumer.create<Any, Any>(vertx, appConfig.kafkaConsumerConfig)
+    kafkaClientMetrics = registry?.let { r ->
+      KafkaClientMetrics(consumer.unwrap()).also { it.bindTo(r) }
+    }
 
     consumer.handler { record ->
       val tp = TopicPartition(record.topic(), record.partition())
@@ -60,16 +68,18 @@ class ConsumerVerticle(
     val sessions = partitions.values.toList()
     partitions.clear()
     sessions.forEach { it.close() }
+    kafkaClientMetrics?.close()
     if (::consumer.isInitialized) consumer.close().coAwait()
     if (::ingestion.isInitialized) ingestion.close()
   }
 
   private fun openPartition(tp: TopicPartition) {
     if (partitions.containsKey(tp)) return
+    val producerId = "${appConfig.groupId}/${tp.topic}/${tp.partition}"
     val session =
         ProducerSession(
             client = ingestion,
-            id = "${appConfig.groupId}/${tp.topic}/${tp.partition}",
+            producerId = producerId,
             control = controlFor(tp),
             retryPolicy = appConfig.restate.retryPolicy,
             listener =

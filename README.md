@@ -16,6 +16,8 @@ it as a container next to your Restate deployment.
 - **Resilient by default** — it reconnects through transient outages with backoff, and fails fast on
   real misconfiguration so your orchestrator restarts it cleanly.
 - **Works with your Kafka** — any consumer setting, including SASL/TLS auth, passes straight through.
+- **Observable** — exposes Prometheus metrics for the Kafka client, throughput, retries and errors out
+  of the box (see [Metrics](#metrics)).
 
 ## Quickstart
 
@@ -47,16 +49,18 @@ Configure via environment variables or a `.properties` file (configured via `CON
 
 **Optional**
 
-| Env                                   | Property key                          | Default              | Description                                                     |
-|---------------------------------------|---------------------------------------|----------------------|-----------------------------------------------------------------|
-| `CONFIG_FILE`                         | – (env only)                          | –                    | Path to a `.properties` file of base config (env wins).         |
-| `RESTATE_AUTH_TOKEN`                  | `restate.auth.token`                  | –                    | Bearer token for the Restate ingress (for Cloud and BYOC).      |
-| `RESTATE_KAFKA_CONSUMER_INSTANCES`    | `restate.kafka.consumer.instances`    | 2 × CPU cores        | Consumer instances per process (partition parallelism).         |
-| `RESTATE_RETRY_INITIAL_INTERVAL_MS`   | `restate.retry.initial.interval.ms`   | `200`                | Initial reconnect backoff after a dropped ingestion stream.     |
-| `RESTATE_RETRY_MAX_INTERVAL_MS`       | `restate.retry.max.interval.ms`       | `30000`              | Maximum reconnect backoff.                                      |
-| `RESTATE_RETRY_EXPONENTIATION_FACTOR` | `restate.retry.exponentiation.factor` | `2.0`                | Backoff growth factor (≥ 1.0).                                  |
-| `RESTATE_RETRY_MAX_ATTEMPTS`          | `restate.retry.max.attempts`          | unbounded            | Give up (and exit) after this many consecutive failed attempts. |
-| `RESTATE_RECORD_MAPPER_CLASS`         | `restate.record.mapper.class`         | `StaticRecordMapper` | The `RecordMapper` class to load (see below).                   |
+| Env                                   | Property key                          | Default              | Description                                                        |
+|---------------------------------------|---------------------------------------|----------------------|--------------------------------------------------------------------|
+| `CONFIG_FILE`                         | – (env only)                          | –                    | Path to a `.properties` file of base config (env wins).            |
+| `RESTATE_AUTH_TOKEN`                  | `restate.auth.token`                  | –                    | Bearer token for the Restate ingress (for Cloud and BYOC).         |
+| `RESTATE_KAFKA_CONSUMER_INSTANCES`    | `restate.kafka.consumer.instances`    | 2 × CPU cores        | Consumer instances per process (partition parallelism).            |
+| `RESTATE_RETRY_INITIAL_INTERVAL_MS`   | `restate.retry.initial.interval.ms`   | `200`                | Initial reconnect backoff after a dropped ingestion stream.        |
+| `RESTATE_RETRY_MAX_INTERVAL_MS`       | `restate.retry.max.interval.ms`       | `30000`              | Maximum reconnect backoff.                                         |
+| `RESTATE_RETRY_EXPONENTIATION_FACTOR` | `restate.retry.exponentiation.factor` | `2.0`                | Backoff growth factor (≥ 1.0).                                     |
+| `RESTATE_RETRY_MAX_ATTEMPTS`          | `restate.retry.max.attempts`          | unbounded            | Give up (and exit) after this many consecutive failed attempts.    |
+| `RESTATE_RECORD_MAPPER_CLASS`         | `restate.record.mapper.class`         | `StaticRecordMapper` | The `RecordMapper` class to load (see below).                      |
+| `RESTATE_METRICS_ENABLED`             | `restate.metrics.enabled`             | `true`               | Expose Prometheus metrics on `/metrics` (see [Metrics](#metrics)). |
+| `RESTATE_METRICS_PORT`                | `restate.metrics.port`                | `9464`               | Port for the `/metrics` scrape endpoint.                           |
 
 **Extra Kafka consumer settings.** Any other `KAFKA_*` variable is forwarded to the Kafka consumer
 using the Confluent naming convention — lowercased, with underscore runs mapped to separators:
@@ -134,6 +138,24 @@ restate.record.mapper.key.pointer=/customerId
 # Use the "eventId" field as the idempotency key
 restate.record.mapper.idempotencykey.pointer=/eventId
 ```
+
+## Metrics
+
+Prometheus metrics are exposed by default on `http://<host>:9464/metrics` (Prometheus text format).
+Turn them off with `RESTATE_METRICS_ENABLED=false`, or move the port with `RESTATE_METRICS_PORT`.
+
+```bash
+curl localhost:9464/metrics
+```
+
+Four families are published against one registry:
+
+| Prefix                             | What                                                     |
+|------------------------------------|----------------------------------------------------------|
+| `kafka_consumer_*`                 | Native Kafka consumer metrics.                           |
+| `restate_kafka_*`                  | Ingestion-path metrics.                                  |
+| `vertx_*`                          | Vert.x internals.                                        |
+| `jvm_*` / `system_*` / `process_*` | Standard JVM & process metrics (heap, GC, threads, CPU). |
 
 ## Adding an auth provider (or any extra library)
 

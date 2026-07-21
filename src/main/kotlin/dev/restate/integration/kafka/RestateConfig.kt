@@ -33,6 +33,8 @@ class RestateConfig(props: Map<String, String>) :
       parseIngressUrl(getString(INGRESS_URL)).copy(authToken = getPassword(AUTH_TOKEN)?.value())
   val topics: List<String> = getList(TOPICS).map { it.trim() }.filter { it.isNotEmpty() }
   val consumerInstances: Int = getInt(CONSUMER_INSTANCES)
+  val metricsEnabled: Boolean = getBoolean(METRICS_ENABLED)
+  val metricsPort: Int = getInt(METRICS_PORT)
   val retryPolicy: RetryPolicy =
       RetryPolicy(
           initialInterval = getLong(RETRY_INITIAL_INTERVAL_MS).milliseconds,
@@ -60,6 +62,8 @@ class RestateConfig(props: Map<String, String>) :
     const val AUTH_TOKEN = "restate.auth.token"
     const val TOPICS = "topics"
     const val CONSUMER_INSTANCES = "restate.kafka.consumer.instances"
+    const val METRICS_ENABLED = "restate.metrics.enabled"
+    const val METRICS_PORT = "restate.metrics.port"
     const val RECORD_MAPPER_CLASS = "restate.record.mapper.class"
     const val RECORD_MAPPER_PREFIX = "restate.record.mapper."
     const val RETRY_INITIAL_INTERVAL_MS = "restate.retry.initial.interval.ms"
@@ -120,6 +124,21 @@ class RestateConfig(props: Map<String, String>) :
                 Range.atLeast(1),
                 Importance.MEDIUM,
                 "Consumer verticle instances (one KafkaConsumer per event loop). Env: RESTATE_KAFKA_CONSUMER_INSTANCES.",
+            )
+            .define(
+                METRICS_ENABLED,
+                Type.BOOLEAN,
+                true,
+                Importance.MEDIUM,
+                "Expose Prometheus metrics on an embedded /metrics endpoint. Env: RESTATE_METRICS_ENABLED.",
+            )
+            .define(
+                METRICS_PORT,
+                Type.INT,
+                9464,
+                Range.between(1, 65535),
+                Importance.MEDIUM,
+                "Port for the Prometheus /metrics scrape endpoint. Env: RESTATE_METRICS_PORT.",
             )
             .define(
                 RETRY_INITIAL_INTERVAL_MS,

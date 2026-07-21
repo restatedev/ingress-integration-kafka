@@ -290,7 +290,7 @@ private class Env(
   /** Simulate a server window grant of [increment] on the current connection (synchronous). */
   fun grantWindow(increment: Long) {
     client.stream.budget += increment
-    client.listener.onWritable()
+    client.listener.onWritable(client.stream.budget)
   }
 }
 

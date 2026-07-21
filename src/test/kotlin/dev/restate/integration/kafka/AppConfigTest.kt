@@ -118,6 +118,31 @@ class AppConfigTest {
   }
 
   @Test
+  fun `metrics are enabled by default on port 9464`() {
+    val cfg = AppConfig.load(baseEnv())
+    assertThat(cfg.restate.metricsEnabled).isTrue()
+    assertThat(cfg.restate.metricsPort).isEqualTo(9464)
+  }
+
+  @Test
+  fun `honours RESTATE_METRICS_ENABLED and RESTATE_METRICS_PORT overrides`() {
+    val env = baseEnv()
+    env["RESTATE_METRICS_ENABLED"] = "false"
+    env["RESTATE_METRICS_PORT"] = "8081"
+    val cfg = AppConfig.load(env)
+    assertThat(cfg.restate.metricsEnabled).isFalse()
+    assertThat(cfg.restate.metricsPort).isEqualTo(8081)
+  }
+
+  @Test
+  fun `rejects an out-of-range metrics port`() {
+    assertThatThrownBy {
+          AppConfig.load(baseEnv().apply { this["RESTATE_METRICS_PORT"] = "70000" })
+        }
+        .isInstanceOf(IllegalArgumentException::class.java)
+  }
+
+  @Test
   fun `rejects missing bootstrap servers`() {
     val env = baseEnv().apply { remove("KAFKA_BOOTSTRAP_SERVERS") }
     assertThatThrownBy { AppConfig.load(env) }

@@ -1,5 +1,9 @@
 package dev.restate.integration.client
 
+import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.MeterRegistry
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -28,11 +32,18 @@ import org.apache.logging.log4j.LogManager
  */
 class ProducerSession(
     private val client: IngestionClient,
-    private val id: String,
+    private val producerId: String,
     private val control: InboundStreamController,
     private val retryPolicy: RetryPolicy,
     private val listener: Listener? = null,
+    metricsRegistry: MeterRegistry? = null,
 ) {
+
+  companion object {
+    private val LOG = LogManager.getLogger(ProducerSession::class.java)
+  }
+
+  private val metrics: Metrics? = metricsRegistry?.let { Metrics(it, producerId) }
 
   /** Notified once when the session is permanently closed (no further reconnects). */
   interface Listener {
@@ -53,10 +64,11 @@ class ProducerSession(
       } catch (e: CancellationException) {
         throw e // close() cancelled us; let it propagate after the finally
       } catch (e: Throwable) {
-        LOG.error("producer session {} crashed", id, e)
+        LOG.error("producer session {} crashed", producerId, e)
       } finally {
         // Teardown current connection, notify listener.
         currentConnection?.end()
+        metrics?.close()
         listener?.onSessionClosed()
       }
     }
@@ -87,7 +99,7 @@ class ProducerSession(
       try {
         val stream =
             try {
-              client.open(id, currentConnection!!)
+              client.open(producerId, currentConnection!!)
             } catch (e: CancellationException) {
               throw e
             } catch (e: Exception) {
@@ -105,27 +117,29 @@ class ProducerSession(
 
         return // clean close -> done (teardown in the launch's finally)
       } catch (e: IngestionStreamException) {
+        metrics?.recordError()
+
         // Carry the durable watermark forward before deciding, so any rewind uses the latest
         // offset.
         lastCommitted = currentConnection?.lastCommitted ?: lastCommitted
 
         // If it's not retryable, quit.
         if (!e.isRetryable()) {
-          LOG.warn("permanent ingestion error for {}: {} - {}", id, e.kind, e.message)
+          LOG.warn("permanent ingestion error for {}: {} - {}", producerId, e.kind, e.message)
           return
         }
 
         // Get the next backoff delay; null means the policy is exhausted.
         val nextDelay = backoff.next()
         if (nextDelay == null) {
-          LOG.warn("giving up on {} after {} attempts", id, backoff.attempts)
+          LOG.warn("giving up on {} after {} attempts", producerId, backoff.attempts)
           return
         }
 
         // Pause the source, rewind if we ever committed, then wait out the backoff.
         control.pause()
         lastCommitted?.let { control.rewindToOffset(it) }
-        LOG.info("reconnecting {} in {}", id, nextDelay)
+        LOG.info("reconnecting {} in {}", producerId, nextDelay)
         delay(nextDelay)
       }
     }
@@ -164,12 +178,16 @@ class ProducerSession(
     override fun ack(lastAcked: Long) {
       // Instance check: ignore a callback that belongs to a superseded connection.
       if (currentConnection !== this) return
+      // The ack is a cumulative watermark; count only the forward advance as newly-acked records.
+      val prev = this.lastCommitted
       this.lastCommitted = lastAcked
       control.ack(lastAcked)
+      if (prev != null && lastAcked > prev) metrics?.recordAcked(lastAcked - prev)
     }
 
-    override fun onWritable() {
+    override fun onWritable(currentBudget: Long) {
       if (currentConnection !== this) return
+      metrics?.setBudget(currentBudget)
       pump()
     }
 
@@ -186,9 +204,11 @@ class ProducerSession(
     private fun pump() {
       val s = stream ?: return
 
-      // Write out everything we can.
+      // Write out everything we can (the stream itself counts pushed records/bytes).
       while (buffer.isNotEmpty() && s.isWritable()) {
-        s.write(buffer.removeFirst())
+        val inv = buffer.removeFirst()
+        metrics?.recordPushed(inv.payload.size())
+        s.write(inv)
       }
 
       // Resume the source only with a drained backlog and a writable stream; pause otherwise.
@@ -203,7 +223,59 @@ class ProducerSession(
     }
   }
 
-  companion object {
-    private val LOG = LogManager.getLogger(ProducerSession::class.java)
+  private class Metrics(private val registry: MeterRegistry, producerId: String) {
+    private val recordsPushed =
+        Counter.builder("restate.kafka.integration.producersession.records.pushed")
+            .description("Records written to the Restate ingestion stream (includes retries).")
+            .tag("producer_id", producerId)
+            .register(registry)
+    private val bytesPushed =
+        Counter.builder("restate.kafka.integration.producersession.bytes.pushed")
+            .baseUnit("bytes")
+            .description("Payload bytes written to the Restate ingestion stream.")
+            .tag("producer_id", producerId)
+            .register(registry)
+    private val recordsAcked =
+        Counter.builder("restate.kafka.integration.producersession.records.acked")
+            .description(
+                "Records durably acked by Restate in the ingestion stream (committed-offset advance)."
+            )
+            .tag("producer_id", producerId)
+            .register(registry)
+
+    private val budget = AtomicLong(0)
+    private val creditGauge =
+        Gauge.builder("restate.kafka.integration.producersession.budget", budget) {
+              it.get().toDouble()
+            }
+            .description("Remaining Restate flow-control credits on the ingestion stream.")
+            .tag("producer_id", producerId)
+            .register(registry)
+
+    private val errors: Counter =
+        Counter.builder("restate.kafka.integration.producersession.errors")
+            .description("Ingestion stream errors.")
+            .register(registry)
+
+    /** A record ([bytes] of payload) was written to the stream. */
+    fun recordPushed(bytes: Int) {
+      recordsPushed.increment()
+      bytesPushed.increment(bytes.toDouble())
+      budget.decrementAndGet()
+    }
+
+    /** Restate durably committed [count] more records. */
+    fun recordAcked(count: Long) {
+      if (count > 0) recordsAcked.increment(count.toDouble())
+    }
+
+    fun setBudget(newCredit: Long) = budget.set(newCredit)
+
+    /** An ingestion stream error of the given [kind] (see IngestionStreamException.Kind). */
+    fun recordError() = errors.increment()
+
+    fun close() {
+      sequenceOf(recordsPushed, bytesPushed, recordsAcked, creditGauge).forEach(registry::remove)
+    }
   }
 }

@@ -16,14 +16,14 @@ internal class IngestionStreamImpl(
 
   init {
     // Transport-drain axis: a drained socket makes us writable again, if we still have budget.
-    request.drainHandler { if (isWritable()) listener.onWritable() }
+    request.drainHandler { if (isWritable()) listener.onWritable(budget) }
   }
 
   /** Apply a server window grant (an [increment] of 0 is a pure ack and grants nothing). */
   fun grantWindow(increment: Long) {
     val wasWritable = isWritable()
     budget += increment
-    if (!wasWritable && isWritable()) listener.onWritable()
+    if (!wasWritable && isWritable()) listener.onWritable(budget)
   }
 
   override fun updateSettings(settings: StreamSettings) {
@@ -35,6 +35,9 @@ internal class IngestionStreamImpl(
   }
 
   override fun write(invocation: Invocation) {
+    check(isWritable()) {
+      "Stream is not writeable"
+    }
     budget--
     request.write(Request.newBuilder().setRecord(invocation).build())
   }

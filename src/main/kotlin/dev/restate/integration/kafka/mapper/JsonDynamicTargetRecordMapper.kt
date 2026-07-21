@@ -24,13 +24,13 @@ import org.apache.kafka.common.serialization.StringDeserializer
  *
  * Fields (under `restate.record.mapper.*`, i.e. `RESTATE_RECORD_MAPPER_*` env): `service`
  * (required), `handler` (required), `key`, `idempotency.key`, `scope`, `limit.key`. Example:
- * `RESTATE_RECORD_MAPPER_SERVICE_VALUE=OrderService`, `RESTATE_RECORD_MAPPER_HANDLER_POINTER=/type`,
- * `RESTATE_RECORD_MAPPER_KEY_FROMKEY=true`.
+ * `RESTATE_RECORD_MAPPER_SERVICE_VALUE=OrderService`,
+ * `RESTATE_RECORD_MAPPER_HANDLER_POINTER=/type`, `RESTATE_RECORD_MAPPER_KEY_FROMKEY=true`.
  *
  * Static fields become [Settings] defaults (set once in [initialSettings]); dynamically-derived
  * fields (from the key or a JSON pointer) are set per-[Record], overriding those defaults. The
- * payload is the (re-serialized) JSON; W3C trace context is propagated from the Kafka record headers
- * exactly like [StaticRecordMapper].
+ * payload is the (re-serialized) JSON; W3C trace context is propagated from the Kafka record
+ * headers exactly like [StaticRecordMapper].
  */
 class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurable {
 
@@ -59,7 +59,9 @@ class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurab
                 JsonPointer.compile(pointer)
               } catch (e: IllegalArgumentException) {
                 throw IllegalArgumentException(
-                    "restate.record.mapper.$field.$POINTER: ${e.message}", e)
+                    "restate.record.mapper.$field.$POINTER: ${e.message}",
+                    e,
+                )
               }
           add(FieldSource.FromPointer(compiled))
         }
@@ -76,7 +78,8 @@ class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurab
         1 -> sources.single()
         else ->
             throw IllegalArgumentException(
-                "restate.record.mapper.$field: set exactly one of .$FROMKEY/.$POINTER/.$VALUE")
+                "restate.record.mapper.$field: set exactly one of .$FROMKEY/.$POINTER/.$VALUE"
+            )
       }
     }
     service = source(SERVICE, required = true)!!
@@ -105,7 +108,8 @@ class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurab
         Record.newBuilder()
             .setOffset(record.offset())
             .setPayload(
-                value?.let { ByteString.copyFrom(MAPPER.writeValueAsBytes(it)) } ?: ByteString.EMPTY)
+                value?.let { ByteString.copyFrom(MAPPER.writeValueAsBytes(it)) } ?: ByteString.EMPTY
+            )
 
     // service/handler/scope/limit_key: static ones are Settings defaults; set per-record only when
     // derived dynamically (from the key or a JSON pointer).
@@ -133,7 +137,9 @@ class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurab
     return builder.build()
   }
 
-  /** A per-record override for an optional field: null when unset or static (a Settings default). */
+  /**
+   * A per-record override for an optional field: null when unset or static (a Settings default).
+   */
   private fun dynamicOverride(source: FieldSource?, recordKey: String?, value: JsonNode?): String? =
       if (source == null || source is FieldSource.Static) null else source.extract(recordKey, value)
 
@@ -146,7 +152,8 @@ class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurab
   ): String =
       source.extract(recordKey, value)
           ?: throw IllegalStateException(
-              "record mapper could not extract required '$name' from the record at offset $offset")
+              "record mapper could not extract required '$name' from the record at offset $offset"
+          )
 
   /** How a single field is derived from a record. */
   private sealed interface FieldSource {
@@ -186,8 +193,9 @@ class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurab
 
 /** Deserializes Kafka record bytes into a Jackson [JsonNode]; a null (tombstone) stays null. */
 class JsonNodeDeserializer : Deserializer<JsonNode> {
-  override fun deserialize(topic: String?, data: ByteArray?): JsonNode? =
-      data?.let { MAPPER.readTree(it) }
+  override fun deserialize(topic: String?, data: ByteArray?): JsonNode? = data?.let {
+    MAPPER.readTree(it)
+  }
 
   companion object {
     private val MAPPER = ObjectMapper()

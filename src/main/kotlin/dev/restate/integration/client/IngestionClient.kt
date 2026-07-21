@@ -11,7 +11,9 @@ interface IngestionClient {
 
   companion object {
     /** Build a gRPC-backed client with a connection wired for [endpoint]'s transport. */
-    fun connect(vertx: Vertx, endpoint: IngressEndpoint): IngestionClient =
-        IngestionClientImpl.connect(vertx, endpoint)
+    fun connect(
+        vertx: Vertx,
+        endpoint: IngressEndpoint,
+    ): IngestionClient = IngestionClientImpl.connect(vertx, endpoint)
   }
 }
