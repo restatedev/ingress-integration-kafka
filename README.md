@@ -156,6 +156,13 @@ COPY <<'EOF' pom.xml
       <groupId>com.google.cloud.hosted.kafka</groupId>
       <artifactId>managed-kafka-auth-login-handler</artifactId>
       <version>1.0.6</version>
+      <!-- kafka-clients is already in the image -->
+      <exclusions>
+        <exclusion>
+          <groupId>org.apache.kafka</groupId>
+          <artifactId>kafka-clients</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
   </dependencies>
 </project>
