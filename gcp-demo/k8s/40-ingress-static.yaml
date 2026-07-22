@@ -1,0 +1,41 @@
+# Ingress #1 — STATIC mapper. Consumes ${TOPIC_STATIC} and sends every record to
+# the same target: Kafka key -> VO key, record value -> payload -> Counter/add.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingress-static
+  namespace: ${NAMESPACE}
+  labels: { app: ingress-static }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: ingress-static }
+  template:
+    metadata:
+      labels: { app: ingress-static }
+    spec:
+      serviceAccountName: ${KSA_NAME}
+      containers:
+        - name: ingress
+          image: ${INGRESS_IMAGE}
+          env:
+            # --- Kafka connection ---
+            - { name: KAFKA_BOOTSTRAP_SERVERS, value: "${KAFKA_BOOTSTRAP}" }
+            - { name: KAFKA_GROUP_ID, value: "kafka-ingress-static" }
+            - { name: KAFKA_TOPICS, value: "${TOPIC_STATIC}" }
+            - { name: KAFKA_AUTO_OFFSET_RESET, value: "earliest" }
+            # --- Managed Kafka SASL/OAUTHBEARER (via ADC / Workload Identity) ---
+            - { name: KAFKA_SECURITY_PROTOCOL, value: "SASL_SSL" }
+            - { name: KAFKA_SASL_MECHANISM, value: "OAUTHBEARER" }
+            - name: KAFKA_SASL_LOGIN_CALLBACK_HANDLER_CLASS
+              value: "com.google.cloud.hosted.kafka.auth.GcpLoginCallbackHandler"
+            - name: KAFKA_SASL_JAAS_CONFIG
+              value: "org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required;"
+            # --- Restate target: StaticRecordMapper (default) ---
+            - { name: RESTATE_INGRESS_URL, value: "http://restate:8080" }
+            - { name: RESTATE_RECORD_MAPPER_SERVICE, value: "Counter" }
+            - { name: RESTATE_RECORD_MAPPER_HANDLER, value: "add" }
+          ports:
+            - { name: metrics, containerPort: 9464 }
+          resources:
+            requests: { cpu: "500m", memory: "512Mi" }

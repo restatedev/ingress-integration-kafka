@@ -1,0 +1,65 @@
+# Restate server. Single replica with a PVC for its data dir. Exposes the ingress
+# (8080, also serves the ingestion gRPC service) and admin (9070) ports in-cluster.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: restate-data
+  namespace: ${NAMESPACE}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: standard-rwo
+  resources:
+    requests:
+      storage: ${RESTATE_STORAGE_SIZE}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restate
+  namespace: ${NAMESPACE}
+  labels: { app: restate }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # single RWO volume
+  selector:
+    matchLabels: { app: restate }
+  template:
+    metadata:
+      labels: { app: restate }
+    spec:
+      containers:
+        - name: restate
+          image: ${RESTATE_IMAGE}
+          env:
+            # Stable node identity: a Deployment pod's hostname changes across
+            # restarts, and Restate defaults its node-name to the hostname — which
+            # would make it refuse to resume its existing data. Pin it.
+            - { name: RESTATE_NODE_NAME, value: "restate" }
+          ports:
+            - { name: ingress, containerPort: 8080 }
+            - { name: admin, containerPort: 9070 }
+          volumeMounts:
+            # subPath keeps the ext4 volume's lost+found out of Restate's data dir;
+            # Restate treats stray dirs in its base dir as foreign node data and won't start.
+            - { name: data, mountPath: /restate-data, subPath: restate }
+          readinessProbe:
+            httpGet: { path: /health, port: 9070 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: restate-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: restate
+  namespace: ${NAMESPACE}
+spec:
+  selector: { app: restate }
+  ports:
+    - { name: ingress, port: 8080, targetPort: 8080 }
+    - { name: admin, port: 9070, targetPort: 9070 }

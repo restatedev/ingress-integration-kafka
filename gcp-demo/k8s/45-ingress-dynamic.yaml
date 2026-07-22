@@ -1,0 +1,48 @@
+# Ingress #2 — DYNAMIC mapper. Consumes ${TOPIC_DYNAMIC}, parses each record value
+# as JSON, and derives the invocation per record. Here: service/handler are fixed
+# (MapObject/set) but the VIRTUAL OBJECT KEY is extracted from the JSON payload via
+# the `/key` pointer -- so a record {"key":"alice","value":"hello"} sets entry
+# "alice"="hello" on the MapObject instance keyed "alice".
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingress-dynamic
+  namespace: ${NAMESPACE}
+  labels: { app: ingress-dynamic }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: ingress-dynamic }
+  template:
+    metadata:
+      labels: { app: ingress-dynamic }
+    spec:
+      serviceAccountName: ${KSA_NAME}
+      containers:
+        - name: ingress
+          image: ${INGRESS_IMAGE}
+          env:
+            # --- Kafka connection ---
+            - { name: KAFKA_BOOTSTRAP_SERVERS, value: "${KAFKA_BOOTSTRAP}" }
+            - { name: KAFKA_GROUP_ID, value: "kafka-ingress-dynamic" }
+            - { name: KAFKA_TOPICS, value: "${TOPIC_DYNAMIC}" }
+            - { name: KAFKA_AUTO_OFFSET_RESET, value: "earliest" }
+            # --- Managed Kafka SASL/OAUTHBEARER (via ADC / Workload Identity) ---
+            - { name: KAFKA_SECURITY_PROTOCOL, value: "SASL_SSL" }
+            - { name: KAFKA_SASL_MECHANISM, value: "OAUTHBEARER" }
+            - name: KAFKA_SASL_LOGIN_CALLBACK_HANDLER_CLASS
+              value: "com.google.cloud.hosted.kafka.auth.GcpLoginCallbackHandler"
+            - name: KAFKA_SASL_JAAS_CONFIG
+              value: "org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required;"
+            # --- Restate target: JsonDynamicTargetRecordMapper ---
+            - { name: RESTATE_INGRESS_URL, value: "http://restate:8080" }
+            - name: RESTATE_RECORD_MAPPER_CLASS
+              value: "dev.restate.integration.kafka.JsonDynamicTargetRecordMapper"
+            - { name: RESTATE_RECORD_MAPPER_SERVICE_VALUE, value: "MapObject" }
+            - { name: RESTATE_RECORD_MAPPER_HANDLER_VALUE, value: "set" }
+            # VO key pulled from the JSON payload.
+            - { name: RESTATE_RECORD_MAPPER_KEY_POINTER, value: "/key" }
+          ports:
+            - { name: metrics, containerPort: 9464 }
+          resources:
+            requests: { cpu: "500m", memory: "512Mi" }

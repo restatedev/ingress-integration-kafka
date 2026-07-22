@@ -1,0 +1,40 @@
+# The Restate services invoked by ingested records: the Java SDK test-services
+# image, running the Counter and MapObject virtual objects. Registered by setup.sh.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-services
+  namespace: ${NAMESPACE}
+  labels: { app: test-services }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: test-services }
+  template:
+    metadata:
+      labels: { app: test-services }
+    spec:
+      containers:
+        - name: test-services
+          image: ${TEST_SERVICES_IMAGE}
+          env:
+            - { name: SERVICES, value: "${TEST_SERVICES}" }
+          ports:
+            - { name: http, containerPort: 9080 }
+          readinessProbe:
+            tcpSocket: { port: 9080 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 30
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-services
+  namespace: ${NAMESPACE}
+spec:
+  selector: { app: test-services }
+  ports:
+    - { name: http, port: 9080, targetPort: 9080 }

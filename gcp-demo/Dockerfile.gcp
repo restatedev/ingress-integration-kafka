@@ -1,0 +1,43 @@
+# The ingress image with Google Cloud Managed Kafka's SASL/OAUTHBEARER login
+# handler layered on. Same pattern as the repo README's "Adding an auth provider".
+#
+#   docker build -f gcp-demo/Dockerfile.gcp \
+#     --build-arg BASE_IMAGE=ghcr.io/restatedev/ingress-integration-kafka:latest \
+#     --build-arg AUTH_HANDLER_VERSION=1.0.6 \
+#     -t <your-registry>/ingress-gcp:demo .
+#
+# (./build-images.sh does exactly this from config.env.)
+
+ARG BASE_IMAGE=ghcr.io/restatedev/ingress-integration-kafka:latest
+
+# 1. Resolve the auth library JAR + its transitive deps into a folder.
+FROM maven:3-eclipse-temurin-25 AS auth
+ARG AUTH_HANDLER_VERSION=1.0.6
+WORKDIR /build
+# ARGs are exported into RUN's shell, so the version flows into the generated pom.
+RUN cat > pom.xml <<EOF
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>x</groupId><artifactId>x</artifactId><version>1</version>
+  <dependencies>
+    <dependency>
+      <groupId>com.google.cloud.hosted.kafka</groupId>
+      <artifactId>managed-kafka-auth-login-handler</artifactId>
+      <version>${AUTH_HANDLER_VERSION}</version>
+      <!-- kafka-clients is already in the base image -->
+      <exclusions>
+        <exclusion>
+          <groupId>org.apache.kafka</groupId>
+          <artifactId>kafka-clients</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+  </dependencies>
+</project>
+EOF
+RUN mvn -q -DincludeScope=runtime -DoutputDirectory=/libs dependency:copy-dependencies
+
+# 2. Layer them onto the ingress image and add the folder to Jib's classpath.
+FROM ${BASE_IMAGE}
+COPY --from=auth /libs/ /app/extra-libs/
+RUN sed -i 's#$#:/app/extra-libs/*#' /app/jib-classpath-file

@@ -1,0 +1,75 @@
+# Producer #1 (static topic): 5 records, key=user-1, values 1..5. The static
+# ingress maps key -> VO key and value -> payload, hitting Counter/add each time.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-producer-static
+  namespace: ${NAMESPACE}
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels: { app: kafka-producer-static }
+    spec:
+      serviceAccountName: ${KSA_NAME}
+      restartPolicy: Never
+      volumes:
+        - { name: libs, emptyDir: {} }
+        - { name: work, emptyDir: {} }
+      initContainers:
+        - name: resolve-auth
+          image: ${MAVEN_IMAGE}
+          workingDir: /work
+          volumeMounts:
+            - { name: libs, mountPath: /libs }
+            - { name: work, mountPath: /work }
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              cat > /work/pom.xml <<'POM'
+              <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>x</groupId><artifactId>x</artifactId><version>1</version>
+                <dependencies>
+                  <dependency>
+                    <groupId>com.google.cloud.hosted.kafka</groupId>
+                    <artifactId>managed-kafka-auth-login-handler</artifactId>
+                    <version>${AUTH_HANDLER_VERSION}</version>
+                  </dependency>
+                </dependencies>
+              </project>
+              POM
+              mvn -q -Dmaven.repo.local=/work/.m2 -DincludeScope=runtime \
+                  -DoutputDirectory=/libs dependency:copy-dependencies
+              echo "resolved auth libs:" && ls -1 /libs
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+      containers:
+        - name: produce
+          image: ${KAFKA_CLI_IMAGE}
+          volumeMounts:
+            - { name: libs, mountPath: /libs }
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              export CLASSPATH="/libs/*"
+              cat > /tmp/producer.properties <<'PROPS'
+              security.protocol=SASL_SSL
+              sasl.mechanism=OAUTHBEARER
+              sasl.login.callback.handler.class=com.google.cloud.hosted.kafka.auth.GcpLoginCallbackHandler
+              sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required;
+              PROPS
+              printf 'user-1:1\nuser-1:2\nuser-1:3\nuser-1:4\nuser-1:5\n' \
+                | /opt/kafka/bin/kafka-console-producer.sh \
+                    --bootstrap-server '${KAFKA_BOOTSTRAP}' \
+                    --topic '${TOPIC_STATIC}' \
+                    --producer.config /tmp/producer.properties \
+                    --property parse.key=true \
+                    --property key.separator=:
+              echo "produced 5 records to ${TOPIC_STATIC} under key user-1"
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }

@@ -1,0 +1,74 @@
+# Producer #2 (dynamic topic): JSON records with no Kafka key. The dynamic ingress
+# parses each value and pulls the VO key from the /key pointer, routing to
+# MapObject.set. Records: {"key":"alice","value":"hello"}, {"key":"bob",...}.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-producer-dynamic
+  namespace: ${NAMESPACE}
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels: { app: kafka-producer-dynamic }
+    spec:
+      serviceAccountName: ${KSA_NAME}
+      restartPolicy: Never
+      volumes:
+        - { name: libs, emptyDir: {} }
+        - { name: work, emptyDir: {} }
+      initContainers:
+        - name: resolve-auth
+          image: ${MAVEN_IMAGE}
+          workingDir: /work
+          volumeMounts:
+            - { name: libs, mountPath: /libs }
+            - { name: work, mountPath: /work }
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              cat > /work/pom.xml <<'POM'
+              <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>x</groupId><artifactId>x</artifactId><version>1</version>
+                <dependencies>
+                  <dependency>
+                    <groupId>com.google.cloud.hosted.kafka</groupId>
+                    <artifactId>managed-kafka-auth-login-handler</artifactId>
+                    <version>${AUTH_HANDLER_VERSION}</version>
+                  </dependency>
+                </dependencies>
+              </project>
+              POM
+              mvn -q -Dmaven.repo.local=/work/.m2 -DincludeScope=runtime \
+                  -DoutputDirectory=/libs dependency:copy-dependencies
+              echo "resolved auth libs:" && ls -1 /libs
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+      containers:
+        - name: produce
+          image: ${KAFKA_CLI_IMAGE}
+          volumeMounts:
+            - { name: libs, mountPath: /libs }
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              export CLASSPATH="/libs/*"
+              cat > /tmp/producer.properties <<'PROPS'
+              security.protocol=SASL_SSL
+              sasl.mechanism=OAUTHBEARER
+              sasl.login.callback.handler.class=com.google.cloud.hosted.kafka.auth.GcpLoginCallbackHandler
+              sasl.jaas.config=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required;
+              PROPS
+              printf '{"key":"alice","value":"hello"}\n{"key":"bob","value":"world"}\n' \
+                | /opt/kafka/bin/kafka-console-producer.sh \
+                    --bootstrap-server '${KAFKA_BOOTSTRAP}' \
+                    --topic '${TOPIC_DYNAMIC}' \
+                    --producer.config /tmp/producer.properties
+              echo "produced 2 JSON records to ${TOPIC_DYNAMIC}"
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
