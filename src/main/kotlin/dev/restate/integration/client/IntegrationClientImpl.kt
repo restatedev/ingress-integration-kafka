@@ -2,7 +2,7 @@ package dev.restate.integration.client
 
 import dev.restate.ingestion.v1.Error
 import dev.restate.ingestion.v1.ErrorKind
-import dev.restate.ingestion.v1.IngestionSvcGrpcClient
+import dev.restate.ingestion.v1.IntegrationSvcGrpcClient
 import dev.restate.ingestion.v1.Request
 import dev.restate.ingestion.v1.Response
 import dev.restate.ingestion.v1.Start
@@ -26,8 +26,7 @@ internal class IntegrationClientImpl(
       listener: InvocationStream.Listener,
       initialStreamSettings: StreamSettings,
   ): InvocationStream {
-    val request = grpcClient.request(IngestionSvcGrpcClient.Ingest).coAwait()
-    request.headers().set(ACCEPT_VERSION_HEADER, SUPPORTED_VERSION)
+    val request = grpcClient.request(IntegrationSvcGrpcClient.Ingest).coAwait()
     if (authToken != null) {
       request.headers().set("Authorization", "Bearer $authToken")
     }
@@ -53,19 +52,8 @@ internal class IntegrationClientImpl(
           )
           .coAwait()
 
-      // Let's wait for the response before handing the opened stream back.
+      // Wait for the response before handing the opened stream back.
       val response = request.response().coAwait()
-
-      // Version negotiation: if the server echoes a version we don't speak,
-      // it's a permanent misconfiguration, no need to retry.
-      val negotiated = response.headers().get(VERSION_HEADER)
-      if (negotiated != null && negotiated != SUPPORTED_VERSION) {
-        throw IntegrationClientException(
-            IntegrationClientException.Kind.BAD_REQUEST,
-            "server negotiated unsupported ingestion protocol version '$negotiated' " +
-                "(this client supports '$SUPPORTED_VERSION')",
-        )
-      }
 
       // Setup all the handlers
       response.handler { dispatch(it, stream, listener) }
@@ -78,8 +66,8 @@ internal class IntegrationClientImpl(
         )
       }
       response.endHandler {
-        // A non-OK gRPC status on end is a failure (e.g. version negotiation rejected), not a
-        // clean close: surface it so the session retries per policy.
+        // A non-OK gRPC status on end is a failure (e.g. wrong protocol version -> unknown service
+        // path, or a server-side reject), not a clean close: surface it so the session retries.
         val status = response.status()
         if (status == null || status == GrpcStatus.OK) {
           listener.onClose(null)
@@ -101,8 +89,6 @@ internal class IntegrationClientImpl(
             )
         )
       }
-    } catch (err: IntegrationClientException) {
-      listener.onClose(err)
     } catch (err: Throwable) {
       listener.onClose(
           IntegrationClientException(
@@ -131,17 +117,12 @@ internal class IntegrationClientImpl(
     }
     when {
       // The window grant is flow control, not an application event: feed it to the stream's budget.
-      response.hasAck() -> stream.grantWindow(response.ack.incrementBytes)
+      response.hasWindowUpdate() -> stream.grantWindow(response.windowUpdate.incrementBytes)
       response.hasError() -> listener.onClose(response.error.toStreamException())
     }
   }
 
   companion object {
-    /** Ingestion protocol version this client speaks (see the proto's version-negotiation note). */
-    private const val SUPPORTED_VERSION = "1"
-    private const val ACCEPT_VERSION_HEADER = "x-restate-integration-accept-version"
-    private const val VERSION_HEADER = "x-restate-integration-version"
-
     fun connect(
         vertx: Vertx,
         endpoint: IngressEndpoint,

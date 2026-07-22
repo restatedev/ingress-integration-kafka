@@ -7,27 +7,19 @@
 // directory of this repository or package, or at
 // https://github.com/restatedev/proto/blob/main/LICENSE
 
+// Vendored from restatedev/restate#5092 (crates/ingress-http/protobuf/integration_svc.proto).
+// The protocol version is pinned in the package name (…integration.v1): a version mismatch fails
+// as a normal gRPC error (unknown service), so there's no header-based version negotiation.
+
 syntax = "proto3";
 
-package dev.restate.ingress.ingestion;
+package dev.restate.ingress.integration.v1;
 
 // The only local additions to this vendored file are the java_* options below, controlling code
 // generation so the generated classes land in dev.restate.ingestion.v1. Re-add them when re-syncing.
 option java_multiple_files = true;
 option java_package = "dev.restate.ingestion.v1";
 option java_outer_classname = "IngestionProto";
-
-// Version negotiation:
-// When opening a stream, the client advertises the
-// protocol versions it supports via the
-// `x-restate-accept-ingestion-version` header
-// (a comma-separated list, e.g. `1, 2, 3`).
-// The server picks a supported version and echoes it
-// back in the `x-ingestion-version` header (e.g. `1`).
-// If no common version can be agreed on, the server
-// immediately closes the stream with a gRPC error.
-// The current protocol version is 1.
-
 
 // Required.
 // A Start frame must be sent before any Settings or
@@ -170,13 +162,13 @@ message Response {
     optional uint64 last_committed = 1;
 
     oneof response {
-        WindowUpdate ack = 2;
+        WindowUpdate window_update = 2;
         Error error = 3;
     }
 }
 
 // Service that is only reachable on nodes that are alive.
-service IngestionSvc {
+service IntegrationSvc {
   // Opens a bidirectional node-to-node stream.
   rpc Ingest(stream Request)
       returns (stream Response);
