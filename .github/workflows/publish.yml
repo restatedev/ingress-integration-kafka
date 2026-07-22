@@ -48,16 +48,18 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
 
-      # metadata-action emits full image refs; Jib wants bare tags via -Djib.to.tags. On release
-      # tags we also stamp the Gradle version so the image's integration string reports it.
-      - name: Build and push with Jib
+      # Build image with jib
+      - name: Build image with Jib into the Docker daemon
         run: |
           JIB_TAGS=$(printf '%s\n' '${{ steps.meta.outputs.tags }}' | sed 's#.*:##' | paste -sd, -)
           EXTRA=()
           if [ "${{ github.ref_type }}" = "tag" ]; then
             EXTRA+=("-Pversion=${{ steps.meta.outputs.version }}")
           fi
-          ./gradlew jib \
+          ./gradlew jibDockerBuild \
             -Djib.to.image=ghcr.io/restatedev/ingress-integration-kafka:${{ steps.meta.outputs.version }} \
             -Djib.to.tags="$JIB_TAGS" \
             "${EXTRA[@]}"
+
+      - name: Push image to GHCR
+        run: docker push --all-tags ghcr.io/restatedev/ingress-integration-kafka
