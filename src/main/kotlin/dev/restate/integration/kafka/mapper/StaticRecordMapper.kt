@@ -1,10 +1,10 @@
-package dev.restate.integration.kafka
+package dev.restate.integration.kafka.mapper
 
 import com.google.protobuf.ByteString
-import dev.restate.ingestion.v1.Record
+import dev.restate.ingestion.v1.Invocation
 import dev.restate.ingestion.v1.Settings
-import dev.restate.integration.client.Invocation
 import dev.restate.integration.client.StreamSettings
+import dev.restate.integration.kafka.RecordMapper
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.Configurable
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
@@ -12,10 +12,11 @@ import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.serialization.StringDeserializer
 
 /**
- * The default [RecordMapper], used when the user hasn't set `restate.record.mapper.class`: static
- * parity with the built-in Kafka consumer. Every record targets the same service/handler; the Kafka
- * key becomes the VO/Workflow key, the value the payload, and `kafka.*` metadata plus W3C trace
- * context are attached as additional headers. No content-type is set.
+ * The default [dev.restate.integration.kafka.RecordMapper], used when the user hasn't set
+ * `restate.record.mapper.class`: static parity with the built-in Kafka consumer. Every record
+ * targets the same service/handler; the Kafka key becomes the VO/Workflow key, the value the
+ * payload, and `kafka.*` metadata plus W3C trace context are attached as additional headers. No
+ * content-type is set.
  */
 class StaticRecordMapper : RecordMapper<String, ByteArray>, Configurable {
 
@@ -44,7 +45,7 @@ class StaticRecordMapper : RecordMapper<String, ByteArray>, Configurable {
 
   override fun toInvocation(record: ConsumerRecord<String, ByteArray>): Invocation {
     val builder =
-        Record.newBuilder()
+        Invocation.newBuilder()
             .setOffset(record.offset())
             .setPayload(record.value()?.let { ByteString.copyFrom(it) } ?: ByteString.EMPTY)
             .putAdditionalHeaders("kafka.topic", record.topic())

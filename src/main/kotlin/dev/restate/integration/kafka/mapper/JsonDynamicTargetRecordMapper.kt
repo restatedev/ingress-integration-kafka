@@ -1,22 +1,22 @@
-package dev.restate.integration.kafka
+package dev.restate.integration.kafka.mapper
 
 import com.fasterxml.jackson.core.JsonPointer
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.protobuf.ByteString
-import dev.restate.ingestion.v1.Record
+import dev.restate.ingestion.v1.Invocation
 import dev.restate.ingestion.v1.Settings
-import dev.restate.integration.client.Invocation
 import dev.restate.integration.client.StreamSettings
+import dev.restate.integration.kafka.RecordMapper
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.Configurable
 import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.serialization.StringDeserializer
 
 /**
- * A [RecordMapper] that parses each Kafka record value as JSON and derives the invocation's target
- * (and optional key/idempotency-key/scope/limit-key) dynamically. Each field is configured
- * independently by setting **exactly one** of three sub-keys:
+ * A [dev.restate.integration.kafka.RecordMapper] that parses each Kafka record value as JSON and
+ * derives the invocation's target (and optional key/idempotency-key/scope/limit-key) dynamically.
+ * Each field is configured independently by setting **exactly one** of three sub-keys:
  * - `<field>.value = <literal>` — a static value;
  * - `<field>.fromkey = true` — the Kafka record key (string);
  * - `<field>.pointer = <jsonPointer>` — a value pulled from the JSON payload via a Jackson
@@ -28,7 +28,7 @@ import org.apache.kafka.common.serialization.StringDeserializer
  * `RESTATE_RECORD_MAPPER_HANDLER_POINTER=/type`, `RESTATE_RECORD_MAPPER_KEY_FROMKEY=true`.
  *
  * Static fields become [Settings] defaults (set once in [initialSettings]); dynamically-derived
- * fields (from the key or a JSON pointer) are set per-[Record], overriding those defaults. The
+ * fields (from the key or a JSON pointer) are set per-[Invocation], overriding those defaults. The
  * payload is the (re-serialized) JSON; W3C trace context is propagated from the Kafka record
  * headers exactly like [StaticRecordMapper].
  */
@@ -90,7 +90,8 @@ class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurab
     limitKey = source(LIMIT_KEY, required = false)
   }
 
-  // Static fields become defaults on the stream Settings (the stream also stamps the producer id).
+  // Static fields become defaults on the stream Settings (the producer id is stamped separately in
+  // the Start handshake frame, not here).
   override fun initialSettings(): StreamSettings {
     val builder = Settings.newBuilder()
     (service as? FieldSource.Static)?.let { builder.service = it.value }
@@ -105,7 +106,7 @@ class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurab
     val value = record.value()
 
     val builder =
-        Record.newBuilder()
+        Invocation.newBuilder()
             .setOffset(record.offset())
             .setPayload(
                 value?.let { ByteString.copyFrom(MAPPER.writeValueAsBytes(it)) } ?: ByteString.EMPTY

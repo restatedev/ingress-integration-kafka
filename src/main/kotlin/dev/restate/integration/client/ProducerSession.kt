@@ -1,5 +1,6 @@
 package dev.restate.integration.client
 
+import dev.restate.ingestion.v1.Invocation
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
@@ -21,7 +22,7 @@ import org.apache.logging.log4j.LogManager
  * thread already serializes them; only the connect/backoff orchestration ([run]) suspends.
  *
  * Split of responsibilities:
- * - [Connection] owns one stream's send-side state and *is* its [IngestionStream.Listener]; a
+ * - [Connection] owns one stream's send-side state and *is* its [InvocationStream.Listener]; a
  *   superseded connection is inert (the `currentConnection` guard), so a dropped stream's late
  *   events can't disturb the live one.
  * - [run] is a thin coroutine: `open` → `await` the close → back off & retry. It touches connection
@@ -31,7 +32,7 @@ import org.apache.logging.log4j.LogManager
  * at once. MUST be driven by a scope pinned to a single event-loop context.
  */
 class ProducerSession(
-    private val client: IngestionClient,
+    private val client: IntegrationClient,
     private val producerId: String,
     private val control: InboundStreamController,
     private val retryPolicy: RetryPolicy,
@@ -48,6 +49,27 @@ class ProducerSession(
   /** Notified once when the session is permanently closed (no further reconnects). */
   interface Listener {
     fun onSessionClosed()
+  }
+
+  /**
+   * The upstream record source a [ProducerSession] drives. Implemented by the source integration
+   * (e.g. the Kafka consumer verticle); the session calls these to apply backpressure and to
+   * recover on reconnect.
+   */
+  interface InboundStreamController {
+    /** Stop fetching records. */
+    fun pause()
+
+    /** Resume fetching records. */
+    fun resume()
+
+    /**
+     * Acknowledge durability up to (and including) [lastCommitted]; the source may commit onwards.
+     */
+    fun ack(lastCommitted: Long)
+
+    /** Reposition the source to [offset] so uncommitted records are re-read after a reconnect. */
+    fun rewindToOffset(offset: Long)
   }
 
   private var job: Job? = null
@@ -99,15 +121,18 @@ class ProducerSession(
       try {
         val stream =
             try {
-              client.open(producerId, currentConnection!!)
+              client.open(producerId, currentConnection!!, settings)
             } catch (e: CancellationException) {
               throw e
             } catch (e: Exception) {
               // Treat a failed open like a retryable stream drop (see the catch below).
-              throw IngestionStreamException(IngestionStreamException.Kind.UNKNOWN, e.message, e)
+              throw IntegrationClientException(
+                  IntegrationClientException.Kind.UNKNOWN,
+                  e.message,
+                  e,
+              )
             }
         currentConnection!!.attach(stream)
-        stream.updateSettings(settings)
 
         // Connection established, reset retries.
         backoff = retryPolicy.iterator()
@@ -116,7 +141,7 @@ class ProducerSession(
         currentConnection!!.closed.await()
 
         return // clean close -> done (teardown in the launch's finally)
-      } catch (e: IngestionStreamException) {
+      } catch (e: IntegrationClientException) {
         metrics?.recordError()
 
         // Carry the durable watermark forward before deciding, so any rewind uses the latest
@@ -149,19 +174,19 @@ class ProducerSession(
    * One live connection == one stream. Owns its send-side state and is the stream's [Listener]. The
    * handlers are synchronous (they never suspend), so the event loop serializes them for free.
    */
-  private inner class Connection : IngestionStream.Listener {
+  private inner class Connection : InvocationStream.Listener {
     var lastCommitted: Long? = null
     // Completes on a clean close; completes exceptionally with the cause on an error close.
     val closed = CompletableDeferred<Unit>()
 
-    private var stream: IngestionStream? = null
+    private var stream: InvocationStream? = null
     // buffer = poll-batch overrun not yet sent; paused = whether the source is paused.
     // The credit window lives inside the stream now (folded into isWritable), so no budget here.
     private val buffer = ArrayDeque<Invocation>()
     private var paused = true
 
     /** Bind the live stream so the pump can write to it. */
-    fun attach(stream: IngestionStream) {
+    fun attach(stream: InvocationStream) {
       this.stream = stream
     }
 
@@ -191,7 +216,7 @@ class ProducerSession(
       pump()
     }
 
-    override fun onClose(cause: IngestionStreamException?) {
+    override fun onClose(cause: IntegrationClientException?) {
       if (currentConnection !== this) return
       if (cause == null) closed.complete(Unit) else closed.completeExceptionally(cause)
     }
@@ -207,7 +232,7 @@ class ProducerSession(
       // Write out everything we can (the stream itself counts pushed records/bytes).
       while (buffer.isNotEmpty() && s.isWritable()) {
         val inv = buffer.removeFirst()
-        metrics?.recordPushed(inv.payload.size())
+        metrics?.recordPushed(inv)
         s.write(inv)
       }
 
@@ -248,7 +273,10 @@ class ProducerSession(
         Gauge.builder("restate.kafka.integration.producersession.budget", budget) {
               it.get().toDouble()
             }
-            .description("Remaining Restate flow-control credits on the ingestion stream.")
+            .baseUnit("bytes")
+            .description(
+                "Remaining Restate flow-control send window, in bytes, on the ingestion stream."
+            )
             .tag("producer_id", producerId)
             .register(registry)
 
@@ -257,11 +285,12 @@ class ProducerSession(
             .description("Ingestion stream errors.")
             .register(registry)
 
-    /** A record ([bytes] of payload) was written to the stream. */
-    fun recordPushed(bytes: Int) {
+    /** An [invocation] was written to the stream. */
+    fun recordPushed(invocation: Invocation) {
       recordsPushed.increment()
-      bytesPushed.increment(bytes.toDouble())
-      budget.decrementAndGet()
+      bytesPushed.increment(invocation.payload.size().toDouble())
+      // Mirror the stream's byte window, which debits the serialized invocation size per write.
+      budget.addAndGet(-invocation.serializedSize.toLong())
     }
 
     /** Restate durably committed [count] more records. */
@@ -271,7 +300,7 @@ class ProducerSession(
 
     fun setBudget(newCredit: Long) = budget.set(newCredit)
 
-    /** An ingestion stream error of the given [kind] (see IngestionStreamException.Kind). */
+    /** An ingestion stream error. */
     fun recordError() = errors.increment()
 
     fun close() {

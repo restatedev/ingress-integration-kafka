@@ -1,4 +1,7 @@
 import com.google.protobuf.gradle.id
+import java.io.File
+import java.util.concurrent.TimeUnit
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
   kotlin("jvm") version "2.3.21"
@@ -10,7 +13,11 @@ plugins {
 
 group = "dev.restate"
 
-version = "1.0-SNAPSHOT"
+// Overridable from CI (e.g. `-Pversion=1.2.3` on a release tag) so the generated Version /
+// integration string and image tags reflect the released version; defaults to a snapshot locally.
+version =
+    (findProperty("version")?.toString()?.takeUnless { it.isBlank() || it == "unspecified" })
+        ?: "0.1-SNAPSHOT"
 
 repositories { mavenCentral() }
 
@@ -107,6 +114,74 @@ tasks.test {
   environment("TESTCONTAINERS_RYUK_DISABLED", "true")
 }
 
+// Generate a Kotlin `Version` object at build time (mirrors the mechanism in ../sdk-java
+// sdk-common/build.gradle.kts). VERSION comes from the Gradle `version`, GIT_HASH from git.
+val generatedVersionDir = layout.buildDirectory.dir("version")
+
+generatedVersionDir.get().asFile.mkdirs()
+
+sourceSets { main { kotlin.srcDir(generatedVersionDir) } }
+
+// From https://discuss.kotlinlang.org/t/use-git-hash-as-version-number-in-build-gradle-kts/19818/4
+fun String.runCommand(
+    workingDir: File = File("."),
+    timeoutAmount: Long = 5,
+    timeoutUnit: TimeUnit = TimeUnit.SECONDS,
+): String =
+    ProcessBuilder(split("\\s(?=(?:[^'\"`]*(['\"`])[^'\"`]*\\1)*[^'\"`]*$)".toRegex()))
+        .directory(workingDir)
+        .redirectOutput(ProcessBuilder.Redirect.PIPE)
+        .redirectError(ProcessBuilder.Redirect.PIPE)
+        .start()
+        .apply { waitFor(timeoutAmount, timeoutUnit) }
+        .run {
+          val error = errorStream.bufferedReader().readText().trim()
+          if (error.isNotEmpty()) {
+            throw IllegalStateException(error)
+          }
+          inputStream.bufferedReader().readText().trim()
+        }
+
+val generateVersionClass =
+    tasks.register("generateVersionClass") {
+      dependsOn(project.tasks.processResources)
+      outputs.dir(generatedVersionDir)
+
+      doFirst {
+        val gitHash = "git rev-parse --short=8 HEAD".runCommand(workingDir = rootDir)
+        val containingDir = generatedVersionDir.get().dir("dev/restate/integration/version").asFile
+        assert(containingDir.exists() || containingDir.mkdirs())
+
+        file("$containingDir/Version.kt")
+            .writeText(
+                """
+      package dev.restate.integration.version
+
+      /** Generated at build time by the `generateVersionClass` Gradle task. Do not edit. */
+      object Version {
+        const val VERSION: String = "$version"
+        const val GIT_HASH: String = "$gitHash"
+        // Integration identifier for the ingestion protocol Start frame: `name/version`.
+        const val INTEGRATION: String = "kafka/" + VERSION + "_" + GIT_HASH
+      }
+      """
+                    .trimIndent()
+            )
+
+        check(
+            file("${projectDir}/build/version/dev/restate/integration/version/Version.kt").exists()
+        ) {
+          "${projectDir}/build/version/dev/restate/integration/version/Version.kt doesn't exist?!"
+        }
+      }
+    }
+
+tasks {
+  withType<JavaCompile>().configureEach { dependsOn(generateVersionClass) }
+  withType<KotlinCompile>().configureEach { dependsOn(generateVersionClass) }
+  withType<org.gradle.jvm.tasks.Jar>().configureEach { dependsOn(generateVersionClass) }
+}
+
 // Container image built by Jib (no Docker daemon / Dockerfile needed).
 //   ./gradlew jibBuildTar   -> build to build/jib-image.tar (offline-verifiable)
 //   ./gradlew jibDockerBuild-> build into the local Docker/Podman daemon
@@ -129,6 +204,10 @@ jib {
   container {
     mainClass = "dev.restate.integration.kafka.MainKt"
     jvmFlags = runtimeJvmArgs
+    // Configure /app/extra-libs dir to be loaded in classpath.
+    // This allows uses to load additional jars into the classpath, e.g. auth plugins, custom record
+    // mappers.
+    extraClasspath = listOf("/app/extra-libs/*")
     // Prometheus scrape endpoint (see RESTATE_METRICS_PORT); informational, does not publish it.
     ports = listOf("9464")
   }

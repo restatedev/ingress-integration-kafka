@@ -1,5 +1,6 @@
 package dev.restate.integration.kafka
 
+import dev.restate.integration.kafka.mapper.StaticRecordMapper
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy

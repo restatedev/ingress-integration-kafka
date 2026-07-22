@@ -1,6 +1,8 @@
 package dev.restate.integration.client
 
-import dev.restate.integration.client.IngestionStreamException.Kind
+import com.google.protobuf.ByteString
+import dev.restate.ingestion.v1.Invocation
+import dev.restate.integration.client.IntegrationClientException.Kind
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.TestScope
@@ -10,9 +12,13 @@ import org.junit.jupiter.api.Test
 
 /**
  * State-machine tests for [ProducerSession] in isolation — no Vert.x. The session runs on the
- * [runTest] virtual-time dispatcher; the ingestion [IngestionClient]/[IngestionStream] and the
+ * [runTest] virtual-time dispatcher; the ingestion [IntegrationClient]/[InvocationStream] and the
  * [InboundStreamController] are faked, and server events are simulated by driving the fake stream's
- * budget and firing the captured [IngestionStream.Listener] callbacks.
+ * budget and firing the captured [InvocationStream.Listener] callbacks.
+ *
+ * The flow-control window is measured in **bytes** (the serialized invocation size), matching the
+ * real [InvocationStreamImpl]. Tests grant windows sized to specific records via [Env.bytes] rather
+ * than hardcoding byte counts, so they don't depend on exact proto encoding sizes.
  *
  * We only use stable coroutine-test APIs: [runTest] + [TestScope] + [delay]. A `delay` in the test
  * body advances the shared virtual clock, which lets the session's launched coroutine make progress
@@ -23,12 +29,14 @@ class ProducerSessionTest {
   // ---- start / connect ----
 
   @Test
-  fun `opens a stream for the producer id and pauses the source`() = test {
+  fun `opens a stream for the producer id, sends Start, and pauses the source`() = test {
     it.connect()
 
     assertThat(it.client.openedProducerIds).containsExactly(PRODUCER_ID)
     assertThat(it.control.pauseCount).isGreaterThanOrEqualTo(1)
-    assertThat(it.client.stream.settingsSent).hasSize(1)
+    // The initial settings are handed to the client to stamp onto the Start handshake frame.
+    assertThat(it.client.startedSettings).hasSize(1)
+    assertThat(it.client.startedSettings.single().service).isEqualTo("Svc")
   }
 
   @Test
@@ -58,7 +66,8 @@ class ProducerSessionTest {
     it.session.offer(record(0))
     it.session.offer(record(1))
 
-    it.grantWindow(5)
+    // Enough bytes for both records, plus slack so the window stays open once the backlog drains.
+    it.grantWindow(it.bytes(record(0), record(1)) + 1)
 
     assertThat(it.client.stream.writtenOffsets()).containsExactly(0L, 1L)
     assertThat(it.control.resumeCount).isEqualTo(1)
@@ -71,16 +80,31 @@ class ProducerSessionTest {
     it.session.offer(record(1))
     it.session.offer(record(2))
 
-    it.grantWindow(2)
+    // Exactly two records' worth of window: after the second the budget hits 0, so the third waits.
+    it.grantWindow(it.bytes(record(0), record(1)))
 
     assertThat(it.client.stream.writtenOffsets()).containsExactly(0L, 1L)
     assertThat(it.control.resumeCount).isEqualTo(0)
   }
 
   @Test
+  fun `a single record may overshoot the window, then the stream blocks`() = test {
+    it.connect()
+
+    // A 1-byte window is smaller than any record: it's legal to send one record that overshoots
+    // (driving the window negative), after which no more may be sent until the next grant.
+    it.grantWindow(1)
+    it.session.offer(record(0))
+    it.session.offer(record(1)) // window already <= 0 -> buffered
+
+    assertThat(it.client.stream.writtenOffsets()).containsExactly(0L)
+    assertThat(it.client.stream.budget).isLessThanOrEqualTo(0)
+  }
+
+  @Test
   fun `while writable, offered records are written immediately`() = test {
     it.connect()
-    it.grantWindow(3) // empty backlog -> resume
+    it.grantWindow(it.bytes(record(0), record(1)) + 100) // empty backlog -> resume
 
     it.session.offer(record(0))
     it.session.offer(record(1))
@@ -91,7 +115,7 @@ class ProducerSessionTest {
   @Test
   fun `exhausting the budget pauses the source and buffers further records`() = test {
     it.connect()
-    it.grantWindow(2)
+    it.grantWindow(it.bytes(record(0), record(1)))
 
     it.session.offer(record(0))
     it.session.offer(record(1)) // budget hits 0 here
@@ -125,10 +149,21 @@ class ProducerSessionTest {
   }
 
   @Test
-  fun `a non-retryable error tears the session down without reconnecting`() = test {
+  fun `a NOT_FOUND error tears the session down without reconnecting`() = test {
     it.connect()
 
-    it.client.listener.onClose(IngestionStreamException(Kind.UNKNOWN_SERVICE))
+    it.client.listener.onClose(IntegrationClientException(Kind.NOT_FOUND))
+    settle()
+
+    assertThat(it.sessionClosed.closedCount).isEqualTo(1)
+    assertThat(it.client.openCount).isEqualTo(1)
+  }
+
+  @Test
+  fun `a BAD_REQUEST error tears the session down without reconnecting`() = test {
+    it.connect()
+
+    it.client.listener.onClose(IntegrationClientException(Kind.BAD_REQUEST))
     settle()
 
     assertThat(it.sessionClosed.closedCount).isEqualTo(1)
@@ -163,7 +198,19 @@ class ProducerSessionTest {
       test(fastRetry()) {
         it.connect()
 
-        it.client.listener.onClose(IngestionStreamException(Kind.SHUTTING_DOWN))
+        it.client.listener.onClose(IntegrationClientException(Kind.SHUTTING_DOWN))
+        settle()
+
+        assertThat(it.client.openCount).isEqualTo(2)
+        assertThat(it.sessionClosed.closedCount).isEqualTo(0)
+      }
+
+  @Test
+  fun `a GO_AWAY error reconnects without tearing down`() =
+      test(fastRetry()) {
+        it.connect()
+
+        it.client.listener.onClose(IntegrationClientException(Kind.GO_AWAY))
         settle()
 
         assertThat(it.client.openCount).isEqualTo(2)
@@ -176,7 +223,7 @@ class ProducerSessionTest {
         it.connect()
         it.client.listener.ack(10)
 
-        it.client.listener.onClose(IngestionStreamException(Kind.SHUTTING_DOWN))
+        it.client.listener.onClose(IntegrationClientException(Kind.SHUTTING_DOWN))
         settle()
 
         assertThat(it.control.rewinds).containsExactly(10L)
@@ -187,7 +234,7 @@ class ProducerSessionTest {
       test(fastRetry()) {
         it.connect()
 
-        it.client.listener.onClose(IngestionStreamException(Kind.SHUTTING_DOWN))
+        it.client.listener.onClose(IntegrationClientException(Kind.SHUTTING_DOWN))
         settle()
 
         assertThat(it.control.rewinds).isEmpty()
@@ -198,7 +245,7 @@ class ProducerSessionTest {
       test(RetryPolicy(maxAttempts = 1)) {
         it.connect()
 
-        it.client.listener.onClose(IngestionStreamException(Kind.SHUTTING_DOWN))
+        it.client.listener.onClose(IntegrationClientException(Kind.SHUTTING_DOWN))
         settle()
 
         assertThat(it.sessionClosed.closedCount).isEqualTo(1)
@@ -233,7 +280,7 @@ class ProducerSessionTest {
         it.connect()
         val stale = it.client.listener // connection #1's listener
 
-        stale.onClose(IngestionStreamException(Kind.SHUTTING_DOWN))
+        stale.onClose(IntegrationClientException(Kind.SHUTTING_DOWN))
         settle() // reconnects -> connection #2 is now current
 
         stale.ack(99) // stale connection acks -> must be ignored
@@ -263,7 +310,11 @@ class ProducerSessionTest {
 
 private const val PRODUCER_ID = "group/topic/0"
 
-private fun record(offset: Long): Invocation = Invocation.newBuilder().setOffset(offset).build()
+private fun record(offset: Long): Invocation =
+    Invocation.newBuilder()
+        .setOffset(offset)
+        .setPayload(ByteString.copyFromUtf8("payload-$offset"))
+        .build()
 
 private fun settings(): StreamSettings =
     StreamSettings.newBuilder().setService("Svc").setHandler("h").build()
@@ -276,7 +327,7 @@ private class Env(
     retry: RetryPolicy,
     private val settle: suspend () -> Unit,
 ) {
-  val client = FakeIngestionClient()
+  val client = FakeIntegrationClient()
   val control = FakeInboundStreamController()
   val sessionClosed = RecordingListener()
   val session = ProducerSession(client, PRODUCER_ID, control, retry, sessionClosed)
@@ -287,26 +338,33 @@ private class Env(
     settle()
   }
 
-  /** Simulate a server window grant of [increment] on the current connection (synchronous). */
+  /**
+   * Simulate a server window grant of [increment] bytes on the current connection (synchronous).
+   */
   fun grantWindow(increment: Long) {
     client.stream.budget += increment
     client.listener.onWritable(client.stream.budget)
   }
+
+  /** The serialized byte size of [records] combined — the exact window needed to send them all. */
+  fun bytes(vararg records: Invocation): Long = records.sumOf { it.serializedSize.toLong() }
 }
 
-private class FakeIngestionClient : IngestionClient {
+private class FakeIntegrationClient : IntegrationClient {
   val openedProducerIds = mutableListOf<String>()
+  val startedSettings = mutableListOf<StreamSettings>()
   var openCount = 0
   var failOpens = 0
 
   /** The listener/stream of the most recently opened connection. */
-  lateinit var listener: IngestionStream.Listener
-  var stream = FakeIngestionStream()
+  lateinit var listener: InvocationStream.Listener
+  var stream = FakeInvocationStream()
 
   override suspend fun open(
       producerId: String,
-      listener: IngestionStream.Listener,
-  ): IngestionStream {
+      listener: InvocationStream.Listener,
+      initialStreamSettings: StreamSettings,
+  ): InvocationStream {
     openCount++
     openedProducerIds.add(producerId)
     if (failOpens > 0) {
@@ -314,18 +372,18 @@ private class FakeIngestionClient : IngestionClient {
       throw RuntimeException("open failed")
     }
     this.listener = listener
-    return FakeIngestionStream().also { stream = it }
+    startedSettings.add(initialStreamSettings)
+    return FakeInvocationStream().also { stream = it }
   }
 
   override suspend fun close() {}
 }
 
-private class FakeIngestionStream : IngestionStream {
-  /**
-   * Send credits; the test grants these to simulate windows. Folds in transport backpressure too.
-   */
+private class FakeInvocationStream : InvocationStream {
+  /** Remaining window in **bytes**; the test grants these to simulate windows. */
   var budget = 0L
   val written = mutableListOf<Invocation>()
+  /** Settings sent mid-stream via [updateSettings]. */
   val settingsSent = mutableListOf<StreamSettings>()
   var ended = false
 
@@ -336,7 +394,8 @@ private class FakeIngestionStream : IngestionStream {
   }
 
   override fun write(invocation: Invocation) {
-    budget--
+    // Byte-based window, mirroring IngestionStreamImpl: a write may drive the budget negative.
+    budget -= invocation.serializedSize.toLong()
     written.add(invocation)
   }
 
@@ -347,7 +406,7 @@ private class FakeIngestionStream : IngestionStream {
   }
 }
 
-private class FakeInboundStreamController : InboundStreamController {
+private class FakeInboundStreamController : ProducerSession.InboundStreamController {
   var pauseCount = 0
   var resumeCount = 0
   val acked = mutableListOf<Long>()

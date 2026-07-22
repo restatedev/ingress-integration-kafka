@@ -1,7 +1,6 @@
 package dev.restate.integration.kafka
 
-import dev.restate.integration.client.InboundStreamController
-import dev.restate.integration.client.IngestionClient
+import dev.restate.integration.client.IntegrationClient
 import dev.restate.integration.client.ProducerSession
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.binder.kafka.KafkaClientMetrics
@@ -27,14 +26,14 @@ class ConsumerVerticle(
 
   private val log = LogManager.getLogger(ConsumerVerticle::class.java)
 
-  private lateinit var ingestion: IngestionClient
+  private lateinit var ingestion: IntegrationClient
   private lateinit var consumer: KafkaConsumer<Any?, Any?>
   private val partitions = HashMap<TopicPartition, ProducerSession>()
   // Native Kafka consumer metrics binder (kafka.consumer.*); closed with the consumer.
   private var kafkaClientMetrics: AutoCloseable? = null
 
   override suspend fun start() {
-    ingestion = IngestionClient.connect(vertx, appConfig.restate.ingress)
+    ingestion = IntegrationClient.connect(vertx, appConfig.restate.ingress)
     consumer = KafkaConsumer.create<Any, Any>(vertx, appConfig.kafkaConsumerConfig)
     kafkaClientMetrics = registry?.let { r ->
       KafkaClientMetrics(consumer.unwrap()).also { it.bindTo(r) }
@@ -48,7 +47,13 @@ class ConsumerVerticle(
         // re-assignment.
         log.debug("dropping record for unassigned partition {}", tp)
       } else {
-        session.offer(appConfig.recordMapper.toInvocation(record.record()))
+        // A null mapping means the mapper filtered the record out: skip it (don't send it on).
+        val invocation = appConfig.recordMapper.toInvocation(record.record())
+        if (invocation == null) {
+          log.trace("record mapper filtered out record {}@{}", tp, record.offset())
+        } else {
+          session.offer(invocation)
+        }
       }
     }
     consumer.partitionsAssignedHandler { assigned -> assigned.forEach(::openPartition) }
@@ -99,7 +104,7 @@ class ConsumerVerticle(
   }
 
   private fun controlFor(tp: TopicPartition) =
-      object : InboundStreamController {
+      object : ProducerSession.InboundStreamController {
         override fun pause() {
           consumer.pause(tp)
         }

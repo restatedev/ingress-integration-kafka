@@ -110,7 +110,7 @@ Parses each record value as JSON and derives the target (and optional fields) *p
 it with:
 
 ```properties
-restate.record.mapper.class=dev.restate.integration.kafka.JsonDynamicTargetRecordMapper
+restate.record.mapper.class=dev.restate.integration.kafka.mapper.JsonDynamicTargetRecordMapper
 ```
 
 Each field is configured by setting **exactly one** of three sub-keys:
@@ -128,7 +128,7 @@ The payload is the record JSON value, and trace context propagates as above.
 Example:
 
 ```properties
-restate.record.mapper.class=dev.restate.integration.kafka.JsonDynamicTargetRecordMapper
+restate.record.mapper.class=dev.restate.integration.kafka.mapper.JsonDynamicTargetRecordMapper
 # Send all records to the Order
 restate.record.mapper.service.value=Order
 # Use the "type" field to determine the handler
@@ -191,10 +191,10 @@ COPY <<'EOF' pom.xml
 EOF
 RUN mvn -q -DincludeScope=runtime -DoutputDirectory=/libs dependency:copy-dependencies
 
-# 2. Layer them onto the ingress image and add the folder to Jib's computed classpath.
+# 2. Layer them onto the ingress image. `/app/extra-libs/` is already on the classpath, so you
+#    just drop the jars in — no need to touch the jib-classpath-file.
 FROM ghcr.io/restatedev/ingress-integration-kafka:latest
 COPY --from=auth /libs/ /app/extra-libs/
-RUN sed -i 's#$#:/app/extra-libs/*#' /app/jib-classpath-file
 ```
 
 Then configure the handler like any other Kafka setting (env or properties file):

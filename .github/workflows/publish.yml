@@ -1,0 +1,63 @@
+# Publishes the container image to GHCR.
+#  - push to main       -> ghcr.io/restatedev/ingress-integration-kafka:main
+#  - push tag v<x.y.z>  -> ...:<x.y.z>  and  ...:latest
+#
+# The image is built and pushed by Jib (see build.gradle.kts) — no Dockerfile, so there's no
+# docker/build-push-action here. We still use the standard docker/login-action (registry auth, which
+# Jib picks up from ~/.docker/config.json) and docker/metadata-action (tag computation), matching
+# the conventions in the restate repo.
+name: Publish image
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # main -> `main`; a v<x.y.z> tag -> `x.y.z` + `latest` (flavor latest=auto). Add
+      # `type=semver,pattern={{major}}.{{minor}}` here too if you also want a rolling `x.y` tag.
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/restatedev/ingress-integration-kafka
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+
+      # metadata-action emits full image refs; Jib wants bare tags via -Djib.to.tags. On release
+      # tags we also stamp the Gradle version so the image's integration string reports it.
+      - name: Build and push with Jib
+        run: |
+          JIB_TAGS=$(printf '%s\n' '${{ steps.meta.outputs.tags }}' | sed 's#.*:##' | paste -sd, -)
+          EXTRA=()
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            EXTRA+=("-Pversion=${{ steps.meta.outputs.version }}")
+          fi
+          ./gradlew jib \
+            -Djib.to.image=ghcr.io/restatedev/ingress-integration-kafka:${{ steps.meta.outputs.version }} \
+            -Djib.to.tags="$JIB_TAGS" \
+            "${EXTRA[@]}"

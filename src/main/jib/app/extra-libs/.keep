@@ -1,0 +1,6 @@
+# This file only exists so the /app/extra-libs directory is present in the image.
+#
+# Drop extra jars here (via a COPY in a downstream Dockerfile layer) to add them to the
+# application classpath — e.g. a Kafka SASL/OAuth login handler or a custom RecordMapper.
+# The directory is already on the classpath (see the jib `extraClasspath` config in
+# build.gradle.kts), so no need to edit /app/jib-classpath-file.

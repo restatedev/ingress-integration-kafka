@@ -1,6 +1,6 @@
 package dev.restate.integration.kafka
 
-import dev.restate.integration.client.Invocation
+import dev.restate.ingestion.v1.Invocation
 import dev.restate.integration.client.StreamSettings
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.serialization.Deserializer
@@ -22,6 +22,6 @@ interface RecordMapper<K, V> {
   /** The stream settings (target service/handler, headers, ...) for a new producer stream. */
   fun initialSettings(): StreamSettings
 
-  /** Map one consumed record to an ingestion invocation. */
-  fun toInvocation(record: ConsumerRecord<K, V>): Invocation
+  /** Map one consumed record to an ingestion invocation, or return `null` to filter it out. */
+  fun toInvocation(record: ConsumerRecord<K, V>): Invocation?
 }

@@ -7,17 +7,54 @@
 // directory of this repository or package, or at
 // https://github.com/restatedev/proto/blob/main/LICENSE
 
-// Vendored from restatedev/restate#5024 (crates/ingress-http/protobuf/ingestion_svc.proto).
-// The only local additions are the `java_*` options below, to control code generation.
-
 syntax = "proto3";
 
-package restate.ingestion;
+package dev.restate.ingress.ingestion;
 
+// The only local additions to this vendored file are the java_* options below, controlling code
+// generation so the generated classes land in dev.restate.ingestion.v1. Re-add them when re-syncing.
 option java_multiple_files = true;
 option java_package = "dev.restate.ingestion.v1";
 option java_outer_classname = "IngestionProto";
 
+// Version negotiation:
+// When opening a stream, the client advertises the
+// protocol versions it supports via the
+// `x-restate-accept-ingestion-version` header
+// (a comma-separated list, e.g. `1, 2, 3`).
+// The server picks a supported version and echoes it
+// back in the `x-ingestion-version` header (e.g. `1`).
+// If no common version can be agreed on, the server
+// immediately closes the stream with a gRPC error.
+// The current protocol version is 1.
+
+
+// Required.
+// A Start frame must be sent before any Settings or
+// Invocation frame.
+// Sending a Start frame again during the lifetime of
+// the stream is illegal: the server will return an
+// error and terminate the stream.
+//
+// Invalid Start message will cause an error
+// to be returned immediately, and stream to be teared down
+// immediately
+message Start {
+    // Unique producer ID for the stream. Deduplication relies on this
+    // ID being unique per ingestion stream
+    // (think Kafka cluster + topic + partition).
+    // An explicitly empty producer ID is valid but disables
+    // deduplication for the entire stream.
+    string producer_id = 1;
+    // Integration identification in format `name/version`
+    string integration = 2;
+    // Initial settings for the stream, letting the client
+    // establish its defaults up front instead of following
+    // the Start frame with a separate Settings frame.
+    // Clients can still send further Settings frames later
+    // to update these defaults during the stream.
+    Settings settings = 3;
+}
 
 // A Settings message defines the default values applied to all
 // subsequent records in the stream.
@@ -25,82 +62,104 @@ option java_outer_classname = "IngestionProto";
 // its fields are not merged with those of previous Settings messages.
 // Leaving an optional field unset clears any previously established
 // default, so later records must supply the value explicitly if needed.
+//
+// It's okay to send settings more than once to tweak and change the defaults
+// during the life time of the stream.
 message Settings {
-    // required fields
-
-    // Unique producer ID for the stream. Deduplication relies on this
-    // ID being unique per ingestion stream
-    // (think Kafka cluster + topic + partition).
-    // An explicitly empty producer ID is valid but disables
-    // deduplication for the entire stream.
-    string producer_id = 1;
-
     // optional fields
     optional string scope = 2;
     optional string limit_key = 3;
     optional string service = 4;
     optional string handler = 5;
-    map<string, string> headers = 6;
+    optional string key = 6;
+    optional string idempotency_key = 7;
+    map<string, string> headers = 8;
 }
 
-message Overrides {
-}
-
-message Record {
+message Invocation {
     uint64 offset = 1;
-    // Required when the target service is a virtual object (VO).
-    optional string key = 2;
-    optional string traceparent = 3;
-    optional string tracestate = 4;
 
     // Overrides
-    optional string scope = 5;
-    optional string limit_key = 6;
-    optional string service = 7;
-    optional string handler = 8;
-    // These headers are merged with the default headers
-    // from the Settings message.
-    map<string, string> additional_headers = 9;
+    optional string scope = 2;
+    optional string limit_key = 3;
+    optional string service = 4;
+    optional string handler = 5;
+    // Required when the target service is a virtual object (VO).
+    // or workflow. This can also be set via the Settings request.
+    optional string key = 6;
+    optional string idempotency_key = 7;
+    map<string, string> additional_headers = 8;
 
-    // Idempotency key for the invocation (Restate dedups on it). Local addition anticipating the
-    // upstream proto; see restatedev/restate#5024.
-    optional string idempotency_key = 10;
+    // delay_ms and invoke_time_ts are mutually
+    // exclusive.
+    optional uint64 delay_ms = 9;
+    // starttime timestamp in ms.
+    optional uint64 invoke_time_ts_ms = 10;
 
-    bytes payload = 100;
+    // This uses the w3c tracecontext format
+    // https://www.w3.org/TR/trace-context/
+    optional string traceparent = 11;
+    optional string tracestate = 12;
+
+    bytes payload = 13;
 }
 
 message Request {
     oneof payload {
-        Settings settings = 1;
-        Record record = 2;
+        Start start = 1;
+        Settings settings = 2;
+        Invocation invocation = 3;
     }
 }
 
-// Application-layer flow control message.
-// It tells the client how much more it can send
+// Application-layer flow-control message.
+// It tells the client how many more bytes it can send
 // before it must wait for the next window update.
 //
 // WindowUpdate also doubles as an explicit ack: the
 // server can send an update with a 0 increment to
-// acknowledge commits up to "Response::last_committed"
+// acknowledge commits up to `Response.last_committed`
 // without changing the window size.
+//
+// If the next invocation is bigger than the available
+// window, it's legal to send it anyway (letting the
+// window go negative) so the client doesn't block. Once
+// the window reaches 0 (or less) it's illegal to send
+// more requests until the next window update; sending
+// more invocations while the window is depleted can
+// result in a GO_AWAY error.
 message WindowUpdate {
-    uint64 increment = 1;
+    uint64 increment_bytes = 1;
 }
 
 enum ErrorKind {
     ERROR_KIND_UNKNOWN = 0;
-    // Server is shutting down and
-    // can't accept more records
+    // The server is shutting down and can't accept more
+    // records. The caller must switch to a new ingress
+    // node and respect the reported last_committed.
     ERROR_KIND_SHUTTING_DOWN = 1;
-    ERROR_KIND_UNKNOWN_SERVICE = 2;
-    ERROR_KIND_UNKNOWN_HANDLER = 3;
-    // add new error kinds here
-
+    // A protocol violation, for example sending another
+    // Start message after the initial one or not
+    // respecting the send window.
+    ERROR_KIND_GO_AWAY = 2;
+    // The invocation target was not found (unknown
+    // service or handler).
+    ERROR_KIND_NOT_FOUND = 3;
+    // Covers a wide range of client errors, including:
+    // - unexpected key
+    // - missing key
+    // - invalid scope format
+    // and similar errors. The `Error.message` should
+    // carry more details.
+    ERROR_KIND_BAD_REQUEST = 4;
 }
+
 message Error {
-    ErrorKind kind = 1;
-    string message = 2;
+    // if set, the error is associated
+    // with the invocation with that offset
+    optional uint64 invocation_offset = 1;
+    ErrorKind kind = 2;
+    string message = 3;
 }
 
 message Response {

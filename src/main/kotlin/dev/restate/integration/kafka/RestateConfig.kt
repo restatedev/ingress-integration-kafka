@@ -2,6 +2,7 @@ package dev.restate.integration.kafka
 
 import dev.restate.integration.client.IngressEndpoint
 import dev.restate.integration.client.RetryPolicy
+import dev.restate.integration.kafka.mapper.StaticRecordMapper
 import io.vertx.core.VertxOptions
 import java.net.URI
 import kotlin.time.Duration.Companion.milliseconds
@@ -23,8 +24,8 @@ import org.apache.kafka.common.config.ConfigDef.Type
  * [org.apache.kafka.common.config.ConfigException] (wrapped by [AppConfig.load]).
  *
  * The record mapper is loaded the "Kafka way": [recordMapper] instantiates the class named by
- * `restate.record.mapper.class` (default [StaticRecordMapper]) and, if it is [Configurable], hands
- * it its `restate.record.mapper.*` sub-config.
+ * `restate.record.mapper.class` (default [dev.restate.integration.kafka.mapper.StaticRecordMapper])
+ * and, if it is [Configurable], hands it its `restate.record.mapper.*` sub-config.
  */
 class RestateConfig(props: Map<String, String>) :
     AbstractConfig(CONFIG_DEF, props, /* doLog= */ false) {
@@ -45,7 +46,8 @@ class RestateConfig(props: Map<String, String>) :
 
   /**
    * Instantiate the configured [RecordMapper] (`restate.record.mapper.class`, default
-   * [StaticRecordMapper]) and configure it with its `restate.record.mapper.*` sub-config.
+   * [dev.restate.integration.kafka.mapper.StaticRecordMapper]) and configure it with its
+   * `restate.record.mapper.*` sub-config.
    */
   fun recordMapper(): RecordMapper<*, *> {
     val cls = getClass(RECORD_MAPPER_CLASS)
