@@ -432,7 +432,7 @@ private class FakeInboundStreamController : ProducerSession.InboundStreamControl
 private class RecordingListener : ProducerSession.Listener {
   var closedCount = 0
 
-  override fun onSessionClosed() {
+  override suspend fun onSessionClosed() {
     closedCount++
   }
 }

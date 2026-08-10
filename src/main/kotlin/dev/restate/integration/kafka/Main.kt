@@ -36,13 +36,11 @@ fun main() {
       }
 
   log.info(
-      "starting {} consumer instance(s) -> topics {} via {} at {}://{}:{}",
+      "starting {} consumer instance(s) -> topics {} via {} at {}",
       config.restate.consumerInstances,
       config.restate.topics,
       config.recordMapper.javaClass.simpleName,
-      if (config.restate.ingress.tls) "https" else "http",
-      config.restate.ingress.host,
-      config.restate.ingress.port,
+      config.restate.ingress,
   )
 
   VertxApplication(emptyArray(), ConsumerApplication(config)).launch()

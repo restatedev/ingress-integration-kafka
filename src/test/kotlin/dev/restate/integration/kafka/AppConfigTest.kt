@@ -50,7 +50,7 @@ class AppConfigTest {
     assertThat(cfg.restate.topics).containsExactly("orders")
     assertThat(cfg.recordMapper.initialSettings().service).isEqualTo("Greeter")
     assertThat(cfg.recordMapper.initialSettings().handler).isEqualTo("greet")
-    assertThat(cfg.restate.ingress).isEqualTo(IngressEndpoint("localhost", 8080, false))
+    assertThat(cfg.restate.ingress).containsOnly(IngressEndpoint("localhost", 8080, false))
     // Defaults to Vert.x's event-loop pool size (one consumer instance per event loop).
     assertThat(cfg.restate.consumerInstances).isEqualTo(VertxOptions.DEFAULT_EVENT_LOOP_POOL_SIZE)
     assertThat(cfg.kafkaConsumerConfig)
@@ -107,7 +107,19 @@ class AppConfigTest {
     val env = baseEnv()
     env["RESTATE_INGRESS_URL"] = "https://ingress.example.com"
     val cfg = AppConfig.load(env)
-    assertThat(cfg.restate.ingress).isEqualTo(IngressEndpoint("ingress.example.com", 443, true))
+    assertThat(cfg.restate.ingress).containsOnly(IngressEndpoint("ingress.example.com", 443, true))
+  }
+
+  @Test
+  fun `parses multiple ingress urls`() {
+    val env = baseEnv()
+    env["RESTATE_INGRESS_URL"] = "https://ingress1.example.com, https://ingress2.example.com"
+    val cfg = AppConfig.load(env)
+    assertThat(cfg.restate.ingress)
+        .containsExactly(
+            IngressEndpoint("ingress1.example.com", 443, true),
+            IngressEndpoint("ingress2.example.com", 443, true),
+        )
   }
 
   @Test

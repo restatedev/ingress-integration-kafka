@@ -9,6 +9,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.apache.logging.log4j.LogManager
@@ -48,7 +49,7 @@ class ProducerSession(
 
   /** Notified once when the session is permanently closed (no further reconnects). */
   interface Listener {
-    fun onSessionClosed()
+    suspend fun onSessionClosed()
   }
 
   /**
@@ -102,8 +103,8 @@ class ProducerSession(
   }
 
   /** Permanently close the session (source revoked / shutdown). */
-  fun close() {
-    job?.cancel()
+  suspend fun close() {
+    job?.cancelAndJoin()
   }
 
   // ---- orchestration: open -> await close -> back off & retry ----
@@ -150,21 +151,21 @@ class ProducerSession(
 
         // If it's not retryable, quit.
         if (!e.isRetryable()) {
-          LOG.warn("permanent ingestion error for {}: {} - {}", producerId, e.kind, e.message)
+          LOG.warn("permanent ingestion error for {}", producerId, e)
           return
         }
 
         // Get the next backoff delay; null means the policy is exhausted.
         val nextDelay = backoff.next()
         if (nextDelay == null) {
-          LOG.warn("giving up on {} after {} attempts", producerId, backoff.attempts)
+          LOG.warn("giving up on {} after {} attempts", producerId, backoff.attempts, e)
           return
         }
 
         // Pause the source, rewind if we ever committed, then wait out the backoff.
         control.pause()
         lastCommitted?.let { control.rewindToOffset(it) }
-        LOG.info("reconnecting {} in {}", producerId, nextDelay)
+        LOG.info("reconnecting {} in {}", producerId, nextDelay, e)
         delay(nextDelay)
       }
     }

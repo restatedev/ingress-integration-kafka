@@ -30,8 +30,10 @@ import org.apache.kafka.common.config.ConfigDef.Type
 class RestateConfig(props: Map<String, String>) :
     AbstractConfig(CONFIG_DEF, props, /* doLog= */ false) {
 
-  val ingress: IngressEndpoint =
-      parseIngressUrl(getString(INGRESS_URL)).copy(authToken = getPassword(AUTH_TOKEN)?.value())
+  val ingress: List<IngressEndpoint> =
+      getList(INGRESS_URL).map {
+        parseIngressUrl(it).copy(authToken = getPassword(AUTH_TOKEN)?.value())
+      }
   val topics: List<String> = getList(TOPICS).map { it.trim() }.filter { it.isNotEmpty() }
   val consumerInstances: Int = getInt(CONSUMER_INSTANCES)
   val metricsEnabled: Boolean = getBoolean(METRICS_ENABLED)
@@ -79,15 +81,27 @@ class RestateConfig(props: Map<String, String>) :
         ConfigDef()
             .define(
                 INGRESS_URL,
-                Type.STRING,
+                Type.LIST,
                 ConfigDef.NO_DEFAULT_VALUE,
                 object : ConfigDef.Validator {
                   override fun ensureValid(name: String, value: Any?) {
                     checkNotNull(value) { "Missing $name" }
-                    require(value is String) {
-                      "Expected $name to be a string, got ${value.javaClass.name}"
+                    require(value is List<*>) {
+                      "Expected $name to be a list of strings, got ${value.javaClass.name}"
                     }
-                    parseIngressUrl(value)
+
+                    require(value.isNotEmpty()) { "Expected $name to be a non-empty list" }
+
+                    for (url in value) {
+                      require(url != null) {
+                        "Expected $name to be a list of strings, got null"
+                      }
+                      require(url is String) {
+                        "Expected $name to be a list of strings, got ${url.javaClass.name}"
+                      }
+
+                      parseIngressUrl(url)
+                    }
                   }
 
                   override fun toString(): String {

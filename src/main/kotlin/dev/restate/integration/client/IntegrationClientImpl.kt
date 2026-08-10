@@ -8,18 +8,14 @@ import dev.restate.ingestion.v1.Response
 import dev.restate.ingestion.v1.Start
 import dev.restate.integration.version.Version
 import io.vertx.core.Vertx
-import io.vertx.core.http.HttpClientOptions
-import io.vertx.core.http.HttpVersion
 import io.vertx.grpc.client.GrpcClient
 import io.vertx.grpc.common.GrpcStatus
 import io.vertx.kotlin.coroutines.coAwait
 
 internal class IntegrationClientImpl(
     private val grpcClient: GrpcClient,
-    endpoint: IngressEndpoint,
+    private val authToken: String?,
 ) : IntegrationClient {
-
-  private val authToken = endpoint.authToken
 
   override suspend fun open(
       producerId: String,
@@ -125,24 +121,12 @@ internal class IntegrationClientImpl(
   companion object {
     fun connect(
         vertx: Vertx,
-        endpoint: IngressEndpoint,
+        endpoints: List<IngressEndpoint>,
     ): IntegrationClientImpl =
         IntegrationClientImpl(
-            buildGrpcClient(vertx, endpoint),
-            endpoint,
+            MultiEndpointGrpcClient(vertx, endpoints),
+            endpoints.firstOrNull()?.authToken,
         )
-
-    private fun buildGrpcClient(vertx: Vertx, endpoint: IngressEndpoint): GrpcClient {
-      val httpOptions = HttpClientOptions().setProtocolVersion(HttpVersion.HTTP_2)
-      httpOptions.setDefaultHost(endpoint.host).setDefaultPort(endpoint.port)
-      if (endpoint.tls) {
-        httpOptions.setSsl(true).isUseAlpn = true
-      } else {
-        // Plaintext gRPC uses HTTP/2 with prior knowledge (no h2c upgrade dance).
-        httpOptions.setHttp2ClearTextUpgrade(false)
-      }
-      return GrpcClient.client(vertx, httpOptions)
-    }
 
     private fun Error.toStreamException(): IntegrationClientException {
       // Include the offending offset when the server attributes the error to a specific invocation.

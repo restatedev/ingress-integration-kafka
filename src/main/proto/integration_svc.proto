@@ -7,10 +7,6 @@
 // directory of this repository or package, or at
 // https://github.com/restatedev/proto/blob/main/LICENSE
 
-// Vendored from restatedev/restate#5092 (crates/ingress-http/protobuf/integration_svc.proto).
-// The protocol version is pinned in the package name (…integration.v1): a version mismatch fails
-// as a normal gRPC error (unknown service), so there's no header-based version negotiation.
-
 syntax = "proto3";
 
 package dev.restate.ingress.integration.v1;
@@ -169,7 +165,7 @@ message Response {
 
 // Service that is only reachable on nodes that are alive.
 service IntegrationSvc {
-  // Opens a bidirectional node-to-node stream.
-  rpc Ingest(stream Request)
-      returns (stream Response);
+    // Opens a bidirectional node-to-node stream.
+    rpc Ingest(stream Request)
+        returns (stream Response);
 }

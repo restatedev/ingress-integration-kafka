@@ -44,5 +44,7 @@ internal class InvocationStreamImpl(
 
   override fun end() {
     request.end()
+    // Poison the budget
+    budget = Long.MIN_VALUE
   }
 }

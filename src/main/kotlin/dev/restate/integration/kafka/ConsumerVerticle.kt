@@ -9,6 +9,7 @@ import io.vertx.kafka.client.consumer.KafkaConsumer
 import io.vertx.kafka.client.consumer.OffsetAndMetadata
 import io.vertx.kotlin.coroutines.CoroutineVerticle
 import io.vertx.kotlin.coroutines.coAwait
+import kotlinx.coroutines.launch
 import org.apache.logging.log4j.LogManager
 
 /**
@@ -57,7 +58,9 @@ class ConsumerVerticle(
       }
     }
     consumer.partitionsAssignedHandler { assigned -> assigned.forEach(::openPartition) }
-    consumer.partitionsRevokedHandler { revoked -> revoked.forEach(::closePartition) }
+    consumer.partitionsRevokedHandler { revoked ->
+      launch { revoked.forEach { closePartition(it) } }
+    }
     consumer.exceptionHandler { log.error("kafka consumer error", it) }
 
     consumer.subscribe(appConfig.restate.topics.toSet()).coAwait()
@@ -71,11 +74,14 @@ class ConsumerVerticle(
   override suspend fun stop() {
     log.info("stopping consumer instance ({} partitions)", partitions.size)
     val sessions = partitions.values.toList()
-    partitions.clear()
+
+    // Close all producer sessions
     sessions.forEach { it.close() }
+    if (::ingestion.isInitialized) ingestion.close()
+
+    // Close Kafka consumer
     kafkaClientMetrics?.close()
     if (::consumer.isInitialized) consumer.close().coAwait()
-    if (::ingestion.isInitialized) ingestion.close()
   }
 
   private fun openPartition(tp: TopicPartition) {
@@ -89,9 +95,9 @@ class ConsumerVerticle(
             retryPolicy = appConfig.restate.retryPolicy,
             listener =
                 object : ProducerSession.Listener {
-                  override fun onSessionClosed() {
+                  override suspend fun onSessionClosed() {
                     log.info("ingestion session for {} closed", tp)
-                    partitions.remove(tp)
+                    closePartition(tp)
                   }
                 },
         )
@@ -99,7 +105,7 @@ class ConsumerVerticle(
     session.start(this, appConfig.recordMapper.initialSettings())
   }
 
-  private fun closePartition(tp: TopicPartition) {
+  private suspend fun closePartition(tp: TopicPartition) {
     partitions.remove(tp)?.close()
   }
 

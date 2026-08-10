@@ -14,10 +14,10 @@ interface IntegrationClient {
   suspend fun close()
 
   companion object {
-    /** Build a client with a connection wired for [endpoint]'s transport. */
+    /** Build a client with a connection wired for [endpoints]'s transport. */
     fun connect(
         vertx: Vertx,
-        endpoint: IngressEndpoint,
-    ): IntegrationClient = IntegrationClientImpl.connect(vertx, endpoint)
+        endpoints: List<IngressEndpoint>,
+    ): IntegrationClient = IntegrationClientImpl.connect(vertx, endpoints)
   }
 }

@@ -46,7 +46,7 @@ import org.testcontainers.utility.DockerImageName
 class KafkaToRestateE2ETest {
 
   companion object {
-    private const val RESTATE_IMAGE = "ghcr.io/restatedev/restate:main"
+    private const val RESTATE_IMAGE = "ghcr.io/restatedev/restate:pr5026"
     private const val TEST_SERVICES_IMAGE = "ghcr.io/restatedev/test-services-java:main"
     private const val INGRESS_PORT = 8080
     private const val ADMIN_PORT = 9070
@@ -66,6 +66,7 @@ class KafkaToRestateE2ETest {
             .withNetwork(network)
             .withNetworkAliases("restate")
             .withExposedPorts(INGRESS_PORT, ADMIN_PORT)
+            .withEnv("RESTATE_INGRESS__INTEGRATION__ENABLED", "true")
             .waitingFor(
                 Wait.forHttp("/health")
                     .forPort(ADMIN_PORT)
@@ -77,7 +78,6 @@ class KafkaToRestateE2ETest {
             .withNetwork(network)
             .withNetworkAliases("test-services")
             .withEnv("SERVICES", "Counter")
-            .withExposedPorts(SERVICES_PORT)
             .waitingFor(Wait.forListeningPort().withStartupTimeout(1.minutes.toJavaDuration()))
 
     var vertx: Vertx? = null
@@ -149,11 +149,7 @@ class KafkaToRestateE2ETest {
    * Invoke the shared `Counter.get(key)` handler through the ingress; null if not yet answerable.
    */
   private fun counterGet(ingressBase: String, key: String): Long? {
-    val request =
-        HttpRequest.newBuilder(URI.create("$ingressBase/Counter/$key/get"))
-            .header("content-type", "application/json")
-            .POST(HttpRequest.BodyPublishers.noBody())
-            .build()
+    val request = HttpRequest.newBuilder(URI.create("$ingressBase/Counter/$key/get")).GET().build()
     return runCatching {
           val response = http.send(request, HttpResponse.BodyHandlers.ofString())
           if (response.statusCode() in 200..299) response.body().trim().toLongOrNull() else null
