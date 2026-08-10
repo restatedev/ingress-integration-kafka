@@ -9,7 +9,7 @@
 
 syntax = "proto3";
 
-package dev.restate.ingress.integration.v1;
+package dev.restate.ingress.ingestion.v1;
 
 // The only local additions to this vendored file are the java_* options below, controlling code
 // generation so the generated classes land in dev.restate.ingestion.v1. Re-add them when re-syncing.
@@ -163,8 +163,7 @@ message Response {
     }
 }
 
-// Service that is only reachable on nodes that are alive.
-service IntegrationSvc {
+service IngestionSvc {
     // Opens a bidirectional node-to-node stream.
     rpc Ingest(stream Request)
         returns (stream Response);

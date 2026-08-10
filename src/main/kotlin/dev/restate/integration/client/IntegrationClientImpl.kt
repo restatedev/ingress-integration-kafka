@@ -2,7 +2,7 @@ package dev.restate.integration.client
 
 import dev.restate.ingestion.v1.Error
 import dev.restate.ingestion.v1.ErrorKind
-import dev.restate.ingestion.v1.IntegrationSvcGrpcClient
+import dev.restate.ingestion.v1.IngestionSvcGrpcClient
 import dev.restate.ingestion.v1.Request
 import dev.restate.ingestion.v1.Response
 import dev.restate.ingestion.v1.Start
@@ -22,7 +22,7 @@ internal class IntegrationClientImpl(
       listener: InvocationStream.Listener,
       initialStreamSettings: StreamSettings,
   ): InvocationStream {
-    val request = grpcClient.request(IntegrationSvcGrpcClient.Ingest).coAwait()
+    val request = grpcClient.request(IngestionSvcGrpcClient.Ingest).coAwait()
     if (authToken != null) {
       request.headers().set("Authorization", "Bearer $authToken")
     }
