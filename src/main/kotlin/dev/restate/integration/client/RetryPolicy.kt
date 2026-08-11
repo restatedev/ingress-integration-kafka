@@ -25,10 +25,10 @@ import kotlin.time.Duration.Companion.seconds
  *   the lifetime total.
  */
 data class RetryPolicy(
-    val initialInterval: Duration = 200.milliseconds,
+    val initialInterval: Duration = 500.milliseconds,
     val exponentiationFactor: Double = 2.0,
     val maxInterval: Duration = 30.seconds,
-    val maxAttempts: Int? = null,
+    val maxAttempts: Int? = 15 /* roughly 5 minutes */,
 ) {
   init {
     require(initialInterval > Duration.ZERO) {

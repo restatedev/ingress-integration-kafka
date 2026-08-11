@@ -14,5 +14,5 @@ class IntegrationClientException(
     BAD_REQUEST,
   }
 
-  fun isRetryable(): Boolean = kind != Kind.NOT_FOUND && kind != Kind.BAD_REQUEST
+  fun isRetryable(): Boolean = kind != Kind.BAD_REQUEST
 }

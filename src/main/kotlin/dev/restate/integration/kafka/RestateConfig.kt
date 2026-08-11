@@ -179,13 +179,12 @@ class RestateConfig(props: Map<String, String>) :
                 Importance.LOW,
                 "Reconnect backoff multiplier (>= 1.0, enforced by RetryPolicy). Env: RESTATE_RETRY_EXPONENTIATION_FACTOR.",
             )
-            // Optional: null default = retry forever. RetryPolicy enforces >= 1 when set.
             .define(
                 RETRY_MAX_ATTEMPTS,
                 Type.INT,
-                null,
+                RETRY_DEFAULTS.maxAttempts,
                 Importance.LOW,
-                "Max consecutive reconnect attempts before giving up; unset = retry forever. Env: RESTATE_RETRY_MAX_ATTEMPTS.",
+                "Max consecutive reconnect attempts before giving up; unset = retry 15 times. Env: RESTATE_RETRY_MAX_ATTEMPTS.",
             )
 
     private fun parseIngressUrl(raw: String): IngressEndpoint {
