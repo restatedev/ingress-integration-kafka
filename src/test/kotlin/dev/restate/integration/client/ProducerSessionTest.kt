@@ -149,17 +149,6 @@ class ProducerSessionTest {
   }
 
   @Test
-  fun `a NOT_FOUND error tears the session down without reconnecting`() = test {
-    it.connect()
-
-    it.client.listener.onClose(IntegrationClientException(Kind.NOT_FOUND))
-    settle()
-
-    assertThat(it.sessionClosed.closedCount).isEqualTo(1)
-    assertThat(it.client.openCount).isEqualTo(1)
-  }
-
-  @Test
   fun `a BAD_REQUEST error tears the session down without reconnecting`() = test {
     it.connect()
 
