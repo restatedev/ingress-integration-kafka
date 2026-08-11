@@ -54,10 +54,10 @@ Configure via environment variables or a `.properties` file (configured via `CON
 | `CONFIG_FILE`                         | – (env only)                          | –                    | Path to a `.properties` file of base config (env wins).            |
 | `RESTATE_AUTH_TOKEN`                  | `restate.auth.token`                  | –                    | Bearer token for the Restate ingress (for Cloud and BYOC).         |
 | `RESTATE_KAFKA_CONSUMER_INSTANCES`    | `restate.kafka.consumer.instances`    | 2 × CPU cores        | Consumer instances per process (partition parallelism).            |
-| `RESTATE_RETRY_INITIAL_INTERVAL_MS`   | `restate.retry.initial.interval.ms`   | `200`                | Initial reconnect backoff after a dropped ingestion stream.        |
+| `RESTATE_RETRY_INITIAL_INTERVAL_MS`   | `restate.retry.initial.interval.ms`   | `500`                | Initial reconnect backoff after a dropped ingestion stream.        |
 | `RESTATE_RETRY_MAX_INTERVAL_MS`       | `restate.retry.max.interval.ms`       | `30000`              | Maximum reconnect backoff.                                         |
 | `RESTATE_RETRY_EXPONENTIATION_FACTOR` | `restate.retry.exponentiation.factor` | `2.0`                | Backoff growth factor (≥ 1.0).                                     |
-| `RESTATE_RETRY_MAX_ATTEMPTS`          | `restate.retry.max.attempts`          | unbounded            | Give up (and exit) after this many consecutive failed attempts.    |
+| `RESTATE_RETRY_MAX_ATTEMPTS`          | `restate.retry.max.attempts`          | `15` (≈ 5 min)       | Give up (and exit) after this many consecutive failed attempts; unset to retry indefinitely. |
 | `RESTATE_RECORD_MAPPER_CLASS`         | `restate.record.mapper.class`         | `StaticRecordMapper` | The `RecordMapper` class to load (see below).                      |
 | `RESTATE_METRICS_ENABLED`             | `restate.metrics.enabled`             | `true`               | Expose Prometheus metrics on `/metrics` (see [Metrics](#metrics)). |
 | `RESTATE_METRICS_PORT`                | `restate.metrics.port`                | `9464`               | Port for the `/metrics` scrape endpoint.                           |
@@ -92,17 +92,19 @@ payload, …). Pick the implementation with `RESTATE_RECORD_MAPPER_CLASS`, then 
 Every record goes to the same service/handler.
 The Kafka key (when available) becomes the VO/Workflow key and the value becomes the payload.
 
-| Env                             | Property key                    | Required | Description                        |
-|---------------------------------|---------------------------------|----------|------------------------------------|
-| `RESTATE_RECORD_MAPPER_SERVICE` | `restate.record.mapper.service` | yes      | Restate service to invoke.         |
-| `RESTATE_RECORD_MAPPER_HANDLER` | `restate.record.mapper.handler` | yes      | Handler on that service to invoke. |
+| Env                                    | Property key                           | Required | Description                                                                                |
+|----------------------------------------|----------------------------------------|----------|-------------------------------------------------------------------------------------------|
+| `RESTATE_RECORD_MAPPER_SERVICE`        | `restate.record.mapper.service`        | yes      | Restate service to invoke.                                                                 |
+| `RESTATE_RECORD_MAPPER_HANDLER`        | `restate.record.mapper.handler`        | yes      | Handler on that service to invoke.                                                         |
+| `RESTATE_RECORD_MAPPER_KAFKA_METADATA` | `restate.record.mapper.kafka.metadata` | no       | Attach the `kafka.topic`/`kafka.partition`/`kafka.offset`/`kafka.timestamp` headers (default `true`). |
 
-| Kafka                                        | Restate `Record`                                                                         |
-|----------------------------------------------|------------------------------------------------------------------------------------------|
-| key (UTF-8)                                  | `key` — the Virtual Object / Workflow key (required by Restate for VO/Workflow targets)  |
-| value (bytes)                                | `payload` (a null value / tombstone → empty payload)                                     |
-| topic / partition / offset / timestamp / key | headers `kafka.topic`, `kafka.partition`, `kafka.offset`, `kafka.timestamp`, `kafka.key` |
-| `traceparent` / `tracestate` headers         | propagated to `traceparent` / `tracestate`                                               |
+| Kafka                                        | Restate `Record`                                                                                       |
+|----------------------------------------------|--------------------------------------------------------------------------------------------------------|
+| key (UTF-8)                                  | `key` — the Virtual Object / Workflow key (required by Restate for VO/Workflow targets)                |
+| value (bytes)                                | `payload` (a null value / tombstone → empty payload)                                                   |
+| topic / partition / offset / timestamp       | headers `kafka.topic`, `kafka.partition`, `kafka.offset`, `kafka.timestamp` (unless `kafka.metadata=false`) |
+| key                                          | header `kafka.key`                                                                                     |
+| `traceparent` / `tracestate` headers         | propagated to `traceparent` / `tracestate`                                                             |
 
 #### JSON dynamic-target mapper
 
@@ -123,7 +125,8 @@ Each field is configured by setting **exactly one** of three sub-keys:
 
 Fields: `service` (required), `handler` (required), `key`, `idempotencykey`, `scope`, `limitkey`.
 
-The payload is the record JSON value, and trace context propagates as above. 
+The payload is the record JSON value, and the `kafka.*` metadata headers (toggled by
+`restate.record.mapper.kafka.metadata`, default `true`) and trace context propagate as above. 
 
 Example:
 

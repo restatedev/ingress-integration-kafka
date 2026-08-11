@@ -15,8 +15,8 @@ import org.apache.kafka.common.serialization.StringDeserializer
  * The default [dev.restate.integration.kafka.RecordMapper], used when the user hasn't set
  * `restate.record.mapper.class`: static parity with the built-in Kafka consumer. Every record
  * targets the same service/handler; the Kafka key becomes the VO/Workflow key, the value the
- * payload, and `kafka.*` metadata plus W3C trace context are attached as additional headers. No
- * content-type is set.
+ * payload, and (unless `kafka.metadata` is disabled) `kafka.*` metadata plus W3C trace context are
+ * attached as additional headers. No content-type is set.
  */
 class StaticRecordMapper : RecordMapper<String, ByteArray>, Configurable {
 
@@ -26,6 +26,7 @@ class StaticRecordMapper : RecordMapper<String, ByteArray>, Configurable {
 
   private lateinit var targetService: String
   private lateinit var targetHandler: String
+  private var kafkaMetadata: Boolean = true
 
   override fun configure(configs: MutableMap<String, *>) {
     targetService =
@@ -38,6 +39,7 @@ class StaticRecordMapper : RecordMapper<String, ByteArray>, Configurable {
             ?: throw IllegalArgumentException(
                 "restate.record.mapper.$HANDLER is required for ${javaClass.name}"
             )
+    kafkaMetadata = configs.kafkaMetadataEnabled()
   }
 
   override fun initialSettings(): StreamSettings =
@@ -48,10 +50,10 @@ class StaticRecordMapper : RecordMapper<String, ByteArray>, Configurable {
         Invocation.newBuilder()
             .setOffset(record.offset())
             .setPayload(record.value()?.let { ByteString.copyFrom(it) } ?: ByteString.EMPTY)
-            .putAdditionalHeaders("kafka.topic", record.topic())
-            .putAdditionalHeaders("kafka.partition", record.partition().toString())
-            .putAdditionalHeaders("kafka.offset", record.offset().toString())
-            .putAdditionalHeaders("kafka.timestamp", record.timestamp().toString())
+
+    if (kafkaMetadata) {
+      builder.putKafkaMetadataHeaders(record)
+    }
 
     record.key()?.let {
       // The VO/Workflow key + a convenience header. A null key means no key (the server rejects it

@@ -29,8 +29,9 @@ import org.apache.kafka.common.serialization.StringDeserializer
  *
  * Static fields become [Settings] defaults (set once in [initialSettings]); dynamically-derived
  * fields (from the key or a JSON pointer) are set per-[Invocation], overriding those defaults. The
- * payload is the (re-serialized) JSON; W3C trace context is propagated from the Kafka record
- * headers exactly like [StaticRecordMapper].
+ * payload is the (re-serialized) JSON; the `kafka.*` metadata headers (unless `kafka.metadata` is
+ * disabled) and W3C trace context are propagated from the Kafka record exactly like
+ * [StaticRecordMapper].
  */
 class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurable {
 
@@ -44,6 +45,7 @@ class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurab
   private var idempotencyKey: FieldSource? = null
   private var scope: FieldSource? = null
   private var limitKey: FieldSource? = null
+  private var kafkaMetadata: Boolean = true
 
   override fun configure(configs: MutableMap<String, *>) {
     fun source(field: String, required: Boolean): FieldSource? {
@@ -88,6 +90,7 @@ class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurab
     idempotencyKey = source(IDEMPOTENCY_KEY, required = false)
     scope = source(SCOPE, required = false)
     limitKey = source(LIMIT_KEY, required = false)
+    kafkaMetadata = configs.kafkaMetadataEnabled()
   }
 
   // Static fields become defaults on the stream Settings (the producer id is stamped separately in
@@ -111,6 +114,10 @@ class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurab
             .setPayload(
                 value?.let { ByteString.copyFrom(MAPPER.writeValueAsBytes(it)) } ?: ByteString.EMPTY
             )
+
+    if (kafkaMetadata) {
+      builder.putKafkaMetadataHeaders(record)
+    }
 
     // service/handler/scope/limit_key: static ones are Settings defaults; set per-record only when
     // derived dynamically (from the key or a JSON pointer).

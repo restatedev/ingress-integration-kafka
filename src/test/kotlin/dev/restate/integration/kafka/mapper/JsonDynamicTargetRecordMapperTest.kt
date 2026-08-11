@@ -89,6 +89,28 @@ class JsonDynamicTargetRecordMapperTest {
   }
 
   @Test
+  fun `attaches kafka metadata headers by default`() {
+    val m = mapper("service.value" to "S", "handler.value" to "h")
+    val invocation = m.toInvocation(record(value = """{"x":1}""", offset = 42))
+    assertThat(invocation.additionalHeadersMap)
+        .containsEntry("kafka.topic", "t")
+        .containsEntry("kafka.partition", "0")
+        .containsEntry("kafka.offset", "42")
+        .containsKey("kafka.timestamp")
+  }
+
+  @Test
+  fun `kafka metadata false omits the kafka metadata headers`() {
+    val m = mapper("service.value" to "S", "handler.value" to "h", "kafka.metadata" to "false")
+    val invocation = m.toInvocation(record(value = """{"x":1}""", offset = 42))
+    assertThat(invocation.additionalHeadersMap)
+        .doesNotContainKey("kafka.topic")
+        .doesNotContainKey("kafka.partition")
+        .doesNotContainKey("kafka.offset")
+        .doesNotContainKey("kafka.timestamp")
+  }
+
+  @Test
   fun `service is required`() {
     assertThatThrownBy { mapper("handler.value" to "h") }
         .isInstanceOf(IllegalArgumentException::class.java)

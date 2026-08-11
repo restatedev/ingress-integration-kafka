@@ -68,6 +68,31 @@ class StaticRecordMapperTest {
   }
 
   @Test
+  fun `kafka metadata false omits the kafka metadata headers`() {
+    val m =
+        StaticRecordMapper().apply {
+          configure(
+              mutableMapOf(
+                  "service" to "Greeter",
+                  "handler" to "greet",
+                  "kafka.metadata" to "false",
+              )
+          )
+        }
+    val record =
+        m.toInvocation(record(topic = "orders", partition = 3, offset = 42, key = "customer-7"))
+
+    assertThat(record.additionalHeadersMap)
+        .doesNotContainKey("kafka.topic")
+        .doesNotContainKey("kafka.partition")
+        .doesNotContainKey("kafka.offset")
+        .doesNotContainKey("kafka.timestamp")
+    // key handling is independent of the metadata flag
+    assertThat(record.key).isEqualTo("customer-7")
+    assertThat(record.additionalHeadersMap).containsEntry("kafka.key", "customer-7")
+  }
+
+  @Test
   fun `null key omits the key and its header`() {
     val record = mapper.toInvocation(record(key = null, value = "v".toByteArray()))
     assertThat(record.hasKey()).isFalse()
