@@ -38,7 +38,7 @@ class JsonDynamicTargetRecordMapperTest {
             "scope.value" to "orders",
         )
     // Static fields are Settings defaults, not repeated per record.
-    val settings = m.initialSettings()
+    val settings = m.initialDefaults()
     assertThat(settings.service).isEqualTo("OrderService")
     assertThat(settings.scope).isEqualTo("orders")
     assertThat(settings.hasHandler()).isFalse() // handler is dynamic
@@ -63,8 +63,8 @@ class JsonDynamicTargetRecordMapperTest {
   @Test
   fun `dynamic fields land on the record, not settings`() {
     val m = mapper("service.pointer" to "/svc", "handler.value" to "greet")
-    assertThat(m.initialSettings().hasService()).isFalse()
-    assertThat(m.initialSettings().handler).isEqualTo("greet")
+    assertThat(m.initialDefaults().hasService()).isFalse()
+    assertThat(m.initialDefaults().handler).isEqualTo("greet")
 
     val invocation = m.toInvocation(record(value = """{"svc":"Dyn"}"""))
     assertThat(invocation.service).isEqualTo("Dyn")
@@ -74,7 +74,7 @@ class JsonDynamicTargetRecordMapperTest {
   @Test
   fun `omits optional fields when not configured`() {
     val m = mapper("service.value" to "S", "handler.value" to "h")
-    val settings = m.initialSettings()
+    val settings = m.initialDefaults()
     assertThat(settings.service).isEqualTo("S")
     assertThat(settings.handler).isEqualTo("h")
 

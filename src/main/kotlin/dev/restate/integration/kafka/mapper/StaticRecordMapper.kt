@@ -1,9 +1,8 @@
 package dev.restate.integration.kafka.mapper
 
 import com.google.protobuf.ByteString
-import dev.restate.ingestion.v1.Invocation
-import dev.restate.ingestion.v1.Settings
-import dev.restate.integration.client.StreamSettings
+import dev.restate.ingestion.v1.IngestionInvocation
+import dev.restate.integration.client.StreamDefaults
 import dev.restate.integration.kafka.RecordMapper
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.Configurable
@@ -42,12 +41,12 @@ class StaticRecordMapper : RecordMapper<String, ByteArray>, Configurable {
     kafkaMetadata = configs.kafkaMetadataEnabled()
   }
 
-  override fun initialSettings(): StreamSettings =
-      Settings.newBuilder().setService(targetService).setHandler(targetHandler).build()
+  override fun initialDefaults(): StreamDefaults =
+      StreamDefaults.newBuilder().setService(targetService).setHandler(targetHandler).build()
 
-  override fun toInvocation(record: ConsumerRecord<String, ByteArray>): Invocation {
+  override fun toInvocation(record: ConsumerRecord<String, ByteArray>): IngestionInvocation {
     val builder =
-        Invocation.newBuilder()
+        IngestionInvocation.newBuilder()
             .setOffset(record.offset())
             .setPayload(record.value()?.let { ByteString.copyFrom(it) } ?: ByteString.EMPTY)
 

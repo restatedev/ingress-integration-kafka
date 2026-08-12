@@ -1,6 +1,6 @@
 package dev.restate.integration.client
 
-import dev.restate.ingestion.v1.Invocation
+import dev.restate.ingestion.v1.IngestionInvocation
 
 /**
  * A single open `Ingest` bidi stream == one Restate producer == one (topic, partition).
@@ -12,11 +12,11 @@ import dev.restate.ingestion.v1.Invocation
  */
 interface InvocationStream {
 
-  /** (Re)send the stream [StreamSettings] to change the defaults mid-stream. */
-  fun updateSettings(settings: StreamSettings)
+  /** (Re)send the stream [StreamDefaults] to change the defaults mid-stream. */
+  fun updateDefaults(defaults: StreamDefaults)
 
-  /** Write a single [Invocation]. Only call while [isWritable]. */
-  fun write(invocation: Invocation)
+  /** Write a single [IngestionInvocation]. Only call while [isWritable]. */
+  fun write(invocation: IngestionInvocation)
 
   /**
    * True when the stream can accept another record right now — there's remaining Restate window

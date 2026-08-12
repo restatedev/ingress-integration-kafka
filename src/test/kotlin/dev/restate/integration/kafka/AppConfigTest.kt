@@ -48,8 +48,8 @@ class AppConfigTest {
 
     assertThat(cfg.groupId).isEqualTo("my-group")
     assertThat(cfg.restate.topics).containsExactly("orders")
-    assertThat(cfg.recordMapper.initialSettings().service).isEqualTo("Greeter")
-    assertThat(cfg.recordMapper.initialSettings().handler).isEqualTo("greet")
+    assertThat(cfg.recordMapper.initialDefaults().service).isEqualTo("Greeter")
+    assertThat(cfg.recordMapper.initialDefaults().handler).isEqualTo("greet")
     assertThat(cfg.restate.ingress).containsOnly(IngressEndpoint("localhost", 8080, false))
     // Defaults to Vert.x's event-loop pool size (one consumer instance per event loop).
     assertThat(cfg.restate.consumerInstances).isEqualTo(VertxOptions.DEFAULT_EVENT_LOOP_POOL_SIZE)

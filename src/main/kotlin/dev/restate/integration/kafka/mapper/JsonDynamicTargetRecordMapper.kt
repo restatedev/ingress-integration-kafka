@@ -4,9 +4,8 @@ import com.fasterxml.jackson.core.JsonPointer
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.protobuf.ByteString
-import dev.restate.ingestion.v1.Invocation
-import dev.restate.ingestion.v1.Settings
-import dev.restate.integration.client.StreamSettings
+import dev.restate.ingestion.v1.IngestionInvocation
+import dev.restate.integration.client.StreamDefaults
 import dev.restate.integration.kafka.RecordMapper
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.Configurable
@@ -27,7 +26,7 @@ import org.apache.kafka.common.serialization.StringDeserializer
  * `RESTATE_RECORD_MAPPER_SERVICE_VALUE=OrderService`,
  * `RESTATE_RECORD_MAPPER_HANDLER_POINTER=/type`, `RESTATE_RECORD_MAPPER_KEY_FROMKEY=true`.
  *
- * Static fields become [Settings] defaults (set once in [initialSettings]); dynamically-derived
+ * Static fields become [Settings] defaults (set once in [initialDefaults]); dynamically-derived
  * fields (from the key or a JSON pointer) are set per-[Invocation], overriding those defaults. The
  * payload is the (re-serialized) JSON; the `kafka.*` metadata headers (unless `kafka.metadata` is
  * disabled) and W3C trace context are propagated from the Kafka record exactly like
@@ -95,8 +94,8 @@ class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurab
 
   // Static fields become defaults on the stream Settings (the producer id is stamped separately in
   // the Start handshake frame, not here).
-  override fun initialSettings(): StreamSettings {
-    val builder = Settings.newBuilder()
+  override fun initialDefaults(): StreamDefaults {
+    val builder = StreamDefaults.newBuilder()
     (service as? FieldSource.Static)?.let { builder.service = it.value }
     (handler as? FieldSource.Static)?.let { builder.handler = it.value }
     (scope as? FieldSource.Static)?.let { builder.scope = it.value }
@@ -104,12 +103,12 @@ class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurab
     return builder.build()
   }
 
-  override fun toInvocation(record: ConsumerRecord<String, JsonNode>): Invocation {
+  override fun toInvocation(record: ConsumerRecord<String, JsonNode>): IngestionInvocation {
     val recordKey = record.key()
     val value = record.value()
 
     val builder =
-        Invocation.newBuilder()
+        IngestionInvocation.newBuilder()
             .setOffset(record.offset())
             .setPayload(
                 value?.let { ByteString.copyFrom(MAPPER.writeValueAsBytes(it)) } ?: ByteString.EMPTY

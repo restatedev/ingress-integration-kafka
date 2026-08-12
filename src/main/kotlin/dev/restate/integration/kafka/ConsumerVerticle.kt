@@ -102,7 +102,7 @@ class ConsumerVerticle(
                 },
         )
     partitions[tp] = session
-    session.start(this, appConfig.recordMapper.initialSettings())
+    session.start(this, appConfig.recordMapper.initialDefaults())
   }
 
   private suspend fun closePartition(tp: TopicPartition) {

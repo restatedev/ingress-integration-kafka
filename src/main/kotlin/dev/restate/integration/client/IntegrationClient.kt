@@ -8,7 +8,7 @@ interface IntegrationClient {
   suspend fun open(
       producerId: String,
       listener: InvocationStream.Listener,
-      initialStreamSettings: StreamSettings,
+      initialStreamDefaults: StreamDefaults,
   ): InvocationStream
 
   suspend fun close()

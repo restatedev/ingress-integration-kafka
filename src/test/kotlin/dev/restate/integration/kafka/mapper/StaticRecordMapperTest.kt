@@ -28,7 +28,7 @@ class StaticRecordMapperTest {
 
   @Test
   fun `initialSettings carries the configured target service and handler`() {
-    val settings = mapper.initialSettings()
+    val settings = mapper.initialDefaults()
     assertThat(settings.service).isEqualTo("Greeter")
     assertThat(settings.handler).isEqualTo("greet")
   }

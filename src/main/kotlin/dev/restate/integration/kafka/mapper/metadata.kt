@@ -1,6 +1,6 @@
 package dev.restate.integration.kafka.mapper
 
-import dev.restate.ingestion.v1.Invocation
+import dev.restate.ingestion.v1.IngestionInvocation
 import org.apache.kafka.clients.consumer.ConsumerRecord
 
 /**
@@ -17,9 +17,9 @@ internal fun Map<String, *>.kafkaMetadataEnabled(): Boolean =
     (this[KAFKA_METADATA] as? String)?.takeIf { it.isNotBlank() }?.toBoolean() ?: true
 
 /** Attach the `kafka.topic`/`kafka.partition`/`kafka.offset`/`kafka.timestamp` headers. */
-internal fun Invocation.Builder.putKafkaMetadataHeaders(
+internal fun IngestionInvocation.Builder.putKafkaMetadataHeaders(
     record: ConsumerRecord<*, *>
-): Invocation.Builder =
+): IngestionInvocation.Builder =
     putAdditionalHeaders("kafka.topic", record.topic())
         .putAdditionalHeaders("kafka.partition", record.partition().toString())
         .putAdditionalHeaders("kafka.offset", record.offset().toString())

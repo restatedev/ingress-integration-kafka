@@ -1,5 +1,5 @@
 package dev.restate.integration.client
 
-import dev.restate.ingestion.v1.Settings
+import dev.restate.ingestion.v1.IngestionDefaults
 
-typealias StreamSettings = Settings
+typealias StreamDefaults = IngestionDefaults

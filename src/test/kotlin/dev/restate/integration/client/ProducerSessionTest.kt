@@ -1,7 +1,7 @@
 package dev.restate.integration.client
 
 import com.google.protobuf.ByteString
-import dev.restate.ingestion.v1.Invocation
+import dev.restate.ingestion.v1.IngestionInvocation
 import dev.restate.integration.client.IntegrationClientException.Kind
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.delay
@@ -299,14 +299,14 @@ class ProducerSessionTest {
 
 private const val PRODUCER_ID = "group/topic/0"
 
-private fun record(offset: Long): Invocation =
-    Invocation.newBuilder()
+private fun record(offset: Long): IngestionInvocation =
+    IngestionInvocation.newBuilder()
         .setOffset(offset)
         .setPayload(ByteString.copyFromUtf8("payload-$offset"))
         .build()
 
-private fun settings(): StreamSettings =
-    StreamSettings.newBuilder().setService("Svc").setHandler("h").build()
+private fun settings(): StreamDefaults =
+    StreamDefaults.newBuilder().setService("Svc").setHandler("h").build()
 
 private fun fastRetry(maxAttempts: Int? = null) =
     RetryPolicy(initialInterval = 1.milliseconds, maxAttempts = maxAttempts)
@@ -336,12 +336,14 @@ private class Env(
   }
 
   /** The serialized byte size of [records] combined — the exact window needed to send them all. */
-  fun bytes(vararg records: Invocation): Long = records.sumOf { it.serializedSize.toLong() }
+  fun bytes(vararg records: IngestionInvocation): Long = records.sumOf {
+    it.serializedSize.toLong()
+  }
 }
 
 private class FakeIntegrationClient : IntegrationClient {
   val openedProducerIds = mutableListOf<String>()
-  val startedSettings = mutableListOf<StreamSettings>()
+  val startedSettings = mutableListOf<StreamDefaults>()
   var openCount = 0
   var failOpens = 0
 
@@ -352,7 +354,7 @@ private class FakeIntegrationClient : IntegrationClient {
   override suspend fun open(
       producerId: String,
       listener: InvocationStream.Listener,
-      initialStreamSettings: StreamSettings,
+      initialStreamDefaults: StreamDefaults,
   ): InvocationStream {
     openCount++
     openedProducerIds.add(producerId)
@@ -361,7 +363,7 @@ private class FakeIntegrationClient : IntegrationClient {
       throw RuntimeException("open failed")
     }
     this.listener = listener
-    startedSettings.add(initialStreamSettings)
+    startedSettings.add(initialStreamDefaults)
     return FakeInvocationStream().also { stream = it }
   }
 
@@ -371,18 +373,18 @@ private class FakeIntegrationClient : IntegrationClient {
 private class FakeInvocationStream : InvocationStream {
   /** Remaining window in **bytes**; the test grants these to simulate windows. */
   var budget = 0L
-  val written = mutableListOf<Invocation>()
-  /** Settings sent mid-stream via [updateSettings]. */
-  val settingsSent = mutableListOf<StreamSettings>()
+  val written = mutableListOf<IngestionInvocation>()
+  /** Settings sent mid-stream via [updateDefaults]. */
+  val settingsSent = mutableListOf<StreamDefaults>()
   var ended = false
 
   fun writtenOffsets(): List<Long> = written.map { it.offset }
 
-  override fun updateSettings(settings: StreamSettings) {
-    settingsSent.add(settings)
+  override fun updateDefaults(defaults: StreamDefaults) {
+    settingsSent.add(defaults)
   }
 
-  override fun write(invocation: Invocation) {
+  override fun write(invocation: IngestionInvocation) {
     // Byte-based window, mirroring IngestionStreamImpl: a write may drive the budget negative.
     budget -= invocation.serializedSize.toLong()
     written.add(invocation)

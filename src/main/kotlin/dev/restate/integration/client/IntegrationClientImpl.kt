@@ -1,11 +1,12 @@
 package dev.restate.integration.client
 
+import dev.restate.ingestion.v1.DeduplicationMode
 import dev.restate.ingestion.v1.Error
 import dev.restate.ingestion.v1.ErrorKind
+import dev.restate.ingestion.v1.IngestionRequest
+import dev.restate.ingestion.v1.IngestionResponse
+import dev.restate.ingestion.v1.IngestionStart
 import dev.restate.ingestion.v1.IngestionSvcGrpcClient
-import dev.restate.ingestion.v1.Request
-import dev.restate.ingestion.v1.Response
-import dev.restate.ingestion.v1.Start
 import dev.restate.integration.version.Version
 import io.vertx.core.Vertx
 import io.vertx.grpc.client.GrpcClient
@@ -20,7 +21,7 @@ internal class IntegrationClientImpl(
   override suspend fun open(
       producerId: String,
       listener: InvocationStream.Listener,
-      initialStreamSettings: StreamSettings,
+      initialStreamDefaults: StreamDefaults,
   ): InvocationStream {
     val request = grpcClient.request(IngestionSvcGrpcClient.Ingest).coAwait()
     if (authToken != null) {
@@ -37,12 +38,13 @@ internal class IntegrationClientImpl(
       // carries the initial stream defaults. Must be the first frame on the stream.
       request
           .write(
-              Request.newBuilder()
+              IngestionRequest.newBuilder()
                   .setStart(
-                      Start.newBuilder()
+                      IngestionStart.newBuilder()
                           .setProducerId(producerId)
                           .setIntegration(Version.INTEGRATION)
-                          .setSettings(initialStreamSettings)
+                          .setDeduplicationMode(DeduplicationMode.OFFSET_BASED)
+                          .setDefaults(initialStreamDefaults)
                   )
                   .build()
           )
@@ -103,7 +105,7 @@ internal class IntegrationClientImpl(
   }
 
   private fun dispatch(
-      response: Response,
+      response: IngestionResponse,
       stream: InvocationStreamImpl,
       listener: InvocationStream.Listener,
   ) {

@@ -1,6 +1,6 @@
 package dev.restate.integration.client
 
-import dev.restate.ingestion.v1.Invocation
+import dev.restate.ingestion.v1.IngestionInvocation
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
@@ -79,7 +79,7 @@ class ProducerSession(
   // ---- command surface (call from the event-loop context) ----
 
   /** Launch the session. Idempotent: a second call while running is ignored. */
-  fun start(scope: CoroutineScope, settings: StreamSettings) {
+  fun start(scope: CoroutineScope, settings: StreamDefaults) {
     if (job != null) return
     job = scope.launch {
       try {
@@ -98,7 +98,7 @@ class ProducerSession(
   }
 
   /** A record arrived from the source. */
-  fun offer(invocation: Invocation) {
+  fun offer(invocation: IngestionInvocation) {
     currentConnection?.offer(invocation)
   }
 
@@ -109,7 +109,7 @@ class ProducerSession(
 
   // ---- orchestration: open -> await close -> back off & retry ----
 
-  private suspend fun run(settings: StreamSettings) {
+  private suspend fun run(settings: StreamDefaults) {
     // No records until the server grants the first window.
     control.pause()
 
@@ -183,7 +183,7 @@ class ProducerSession(
     private var stream: InvocationStream? = null
     // buffer = poll-batch overrun not yet sent; paused = whether the source is paused.
     // The credit window lives inside the stream now (folded into isWritable), so no budget here.
-    private val buffer = ArrayDeque<Invocation>()
+    private val buffer = ArrayDeque<IngestionInvocation>()
     private var paused = true
 
     /** Bind the live stream so the pump can write to it. */
@@ -196,7 +196,7 @@ class ProducerSession(
       stream?.end()
     }
 
-    fun offer(invocation: Invocation) {
+    fun offer(invocation: IngestionInvocation) {
       buffer.addLast(invocation)
       pump()
     }
@@ -287,7 +287,7 @@ class ProducerSession(
             .register(registry)
 
     /** An [invocation] was written to the stream. */
-    fun recordPushed(invocation: Invocation) {
+    fun recordPushed(invocation: IngestionInvocation) {
       recordsPushed.increment()
       bytesPushed.increment(invocation.payload.size().toDouble())
       // Mirror the stream's byte window, which debits the serialized invocation size per write.

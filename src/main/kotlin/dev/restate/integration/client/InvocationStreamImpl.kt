@@ -1,12 +1,12 @@
 package dev.restate.integration.client
 
-import dev.restate.ingestion.v1.Invocation
-import dev.restate.ingestion.v1.Request
-import dev.restate.ingestion.v1.Response
+import dev.restate.ingestion.v1.IngestionInvocation
+import dev.restate.ingestion.v1.IngestionRequest
+import dev.restate.ingestion.v1.IngestionResponse
 import io.vertx.grpc.client.GrpcClientRequest
 
 internal class InvocationStreamImpl(
-    private val request: GrpcClientRequest<Request, Response>,
+    private val request: GrpcClientRequest<IngestionRequest, IngestionResponse>,
     private val listener: InvocationStream.Listener,
 ) : InvocationStream {
 
@@ -23,21 +23,21 @@ internal class InvocationStreamImpl(
   /**
    * Apply a server window grant of [incrementBytes] (a 0 increment is a pure ack, grants nothing).
    */
-  fun grantWindow(incrementBytes: Long) {
+  fun grantWindow(incrementBytes: Int) {
     val wasWritable = isWritable()
     budget += incrementBytes
     if (!wasWritable && isWritable()) listener.onWritable(budget)
   }
 
-  override fun updateSettings(settings: StreamSettings) {
-    request.write(Request.newBuilder().setSettings(settings).build())
+  override fun updateDefaults(defaults: StreamDefaults) {
+    request.write(IngestionRequest.newBuilder().setDefaults(defaults).build())
   }
 
-  override fun write(invocation: Invocation) {
+  override fun write(invocation: IngestionInvocation) {
     check(isWritable()) { "Stream is not writeable" }
     // Byte-based flow control: debit the serialized invocation size from the window.
     budget -= invocation.serializedSize.toLong()
-    request.write(Request.newBuilder().setInvocation(invocation).build())
+    request.write(IngestionRequest.newBuilder().setInvocation(invocation).build())
   }
 
   override fun isWritable(): Boolean = budget > 0 && !request.writeQueueFull()
