@@ -90,8 +90,7 @@ services:
       SERVICES: 'Counter'
 
   ingress-integration:
-    # Build locally first:  ./gradlew jibDockerBuild
-    image: ghcr.io/restatedev/ingress-integration-kafka:latest
+    image: ghcr.io/restatedev/ingress-integration-kafka:main
     container_name: ingress-integration-kafka
     restart: unless-stopped
     depends_on:
@@ -106,8 +105,8 @@ services:
       # Start from the beginning of the topic on a fresh group so test messages aren't missed.
       KAFKA_AUTO_OFFSET_RESET: 'earliest'
       RESTATE_INGRESS_URL: 'http://restate:8080'
-      RESTATE_TARGET_SERVICE: 'Counter'
-      RESTATE_TARGET_HANDLER: 'add'
+      RESTATE_RECORD_MAPPER_SERVICE: 'Counter'
+      RESTATE_RECORD_MAPPER_HANDLER: 'add'
 
 volumes:
   restate-data:

@@ -51,7 +51,7 @@ payload, …). Pick the implementation with `RESTATE_RECORD_MAPPER_CLASS` or `re
 ### Static record mapper (default)
 
 ```.dotenv
-RESTATE_RECORD_MAPPER_CLASS=dev.restate.integration.kafka.mapper.StaticTargetRecordMapper
+RESTATE_RECORD_MAPPER_CLASS=dev.restate.integration.kafka.mapper.StaticRecordMapper
 ```
 
 Every record goes to the same service/handler. The Kafka record key (when available) becomes the VO/Workflow key and the record value becomes the invocation payload.
