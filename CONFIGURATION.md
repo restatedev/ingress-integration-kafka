@@ -5,6 +5,10 @@ Everything you can tune on the Restate Kafka ingress integration, in one place.
 Configure via environment variables or a `.properties` file (pointed at with the `CONFIG_FILE` env
 var). When both set the same key, the environment variable wins.
 
+`CONFIG_FILE` accepts a comma-separated list of files (e.g. `base.properties,overrides.properties`);
+they are merged left to right, so a later file overrides an earlier one on any shared key (and the
+environment still wins over all of them).
+
 ## Kafka & Restate client configuration
 
 | Env                                   | Property key                          | Required | Default              | Description                                                                                  |
@@ -13,7 +17,7 @@ var). When both set the same key, the environment variable wins.
 | `KAFKA_GROUP_ID`                      | `group.id`                            | yes      | –                    | Kafka consumer group id (also the prefix of the dedup producer id).                          |
 | `KAFKA_TOPICS`                        | `topics`                              | yes      | –                    | Comma-separated topics to subscribe to, e.g. `orders,payments`.                              |
 | `RESTATE_INGRESS_URL`                 | `restate.ingress.url`                 | yes      | –                    | Restate ingestion endpoint, `http://host:port` or `https://host`.                            |
-| `CONFIG_FILE`                         | – (env only)                          | no       | –                    | Path to a `.properties` file of base config (env wins).                                      |
+| `CONFIG_FILE`                         | – (env only)                          | no       | –                    | Comma-separated `.properties` file(s) of base config; later files override earlier, env wins. |
 | `RESTATE_AUTH_TOKEN`                  | `restate.auth.token`                  | no       | –                    | Bearer token for the Restate ingress (for Cloud and BYOC).                                   |
 | `RESTATE_KAFKA_CONSUMER_INSTANCES`    | `restate.kafka.consumer.instances`    | no       | 2 × CPU cores        | Consumer instances per process (partition parallelism).                                      |
 | `RESTATE_RETRY_INITIAL_INTERVAL_MS`   | `restate.retry.initial.interval.ms`   | no       | `500`                | Initial reconnect backoff after a dropped ingestion stream.                                  |

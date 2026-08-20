@@ -2,9 +2,12 @@ package dev.restate.integration.kafka
 
 import dev.restate.integration.client.IngressEndpoint
 import io.vertx.core.VertxOptions
+import java.io.File
+import java.nio.file.Path
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 
 class AppConfigTest {
 
@@ -100,6 +103,54 @@ class AppConfigTest {
     val cfg = AppConfig.load(env, fileConfig = file)
     assertThat(cfg.kafkaConsumerConfig).containsEntry("bootstrap.servers", "broker:9092")
     assertThat(cfg.groupId).isEqualTo("my-group")
+  }
+
+  @Test
+  fun `loadPropertiesFiles returns empty for null or blank`() {
+    assertThat(AppConfig.loadPropertiesFiles(null)).isEmpty()
+    assertThat(AppConfig.loadPropertiesFiles("   ")).isEmpty()
+  }
+
+  @Test
+  fun `loadPropertiesFiles reads a single file`(@TempDir dir: Path) {
+    val file = writeProps(dir, "a.properties", "bootstrap.servers=file-broker:9092", "group.id=g")
+    assertThat(AppConfig.loadPropertiesFiles(file))
+        .containsEntry("bootstrap.servers", "file-broker:9092")
+        .containsEntry("group.id", "g")
+  }
+
+  @Test
+  fun `loadPropertiesFiles merges multiple files with the last winning`(@TempDir dir: Path) {
+    val first = writeProps(dir, "first.properties", "bootstrap.servers=first:9092", "group.id=g")
+    val second = writeProps(dir, "second.properties", "bootstrap.servers=second:9092")
+
+    val merged = AppConfig.loadPropertiesFiles("$first,$second")
+
+    // Later file overrides the earlier one on collision, but non-overridden keys are kept.
+    assertThat(merged)
+        .containsEntry("bootstrap.servers", "second:9092")
+        .containsEntry("group.id", "g")
+  }
+
+  @Test
+  fun `loadPropertiesFiles trims whitespace and skips blank entries`(@TempDir dir: Path) {
+    val first = writeProps(dir, "first.properties", "a=1")
+    val second = writeProps(dir, "second.properties", "b=2")
+
+    val merged = AppConfig.loadPropertiesFiles("  $first , , $second  ,")
+
+    assertThat(merged).containsEntry("a", "1").containsEntry("b", "2")
+  }
+
+  @Test
+  fun `loadPropertiesFiles fails when any listed file is missing`(@TempDir dir: Path) {
+    val existing = writeProps(dir, "a.properties", "a=1")
+    val missing = dir.resolve("nope.properties").toString()
+
+    assertThatThrownBy { AppConfig.loadPropertiesFiles("$existing,$missing") }
+        .isInstanceOf(IllegalArgumentException::class.java)
+        .hasMessageContaining("missing file")
+        .hasMessageContaining(missing)
   }
 
   @Test
@@ -210,5 +261,11 @@ class AppConfigTest {
           AppConfig.load(baseEnv().apply { this["RESTATE_KAFKA_CONSUMER_INSTANCES"] = "0" })
         }
         .isInstanceOf(IllegalArgumentException::class.java)
+  }
+
+  private fun writeProps(dir: Path, name: String, vararg lines: String): String {
+    val file = File(dir.toFile(), name)
+    file.writeText(lines.joinToString("\n"))
+    return file.absolutePath
   }
 }

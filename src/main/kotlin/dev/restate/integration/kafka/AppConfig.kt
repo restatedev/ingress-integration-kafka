@@ -55,7 +55,7 @@ data class AppConfig(
         }
 
     fun load(): AppConfig {
-      val fileConfig = loadPropertiesFile(System.getenv(CONFIG_FILE_ENV))
+      val fileConfig = loadPropertiesFiles(System.getenv(CONFIG_FILE_ENV))
       return load(System.getenv(), fileConfig)
     }
 
@@ -128,14 +128,26 @@ data class AppConfig(
       )
     }
 
-    /** Load a `.properties` file into a plain map; returns empty if [path] is null/blank. */
-    internal fun loadPropertiesFile(path: String?): Map<String, String> {
-      if (path.isNullOrBlank()) return emptyMap()
-      val file = File(path)
-      require(file.isFile) { "$CONFIG_FILE_ENV points to a missing file: '$path'." }
-      val props = Properties()
-      file.inputStream().use { props.load(it) }
-      return props.entries.associate { (k, v) -> k.toString() to v.toString() }
+    /**
+     * Load one or more `.properties` files into a single map. [paths] is a comma-separated list of
+     * file paths (whitespace around each is trimmed, blank entries skipped); on a key collision a
+     * later file wins over an earlier one. Returns empty if [paths] is null/blank.
+     */
+    internal fun loadPropertiesFiles(paths: String?): Map<String, String> {
+      if (paths.isNullOrBlank()) return emptyMap()
+      val merged = LinkedHashMap<String, String>()
+      paths
+          .split(',')
+          .map { it.trim() }
+          .filter { it.isNotEmpty() }
+          .forEach { path ->
+            val file = File(path)
+            require(file.isFile) { "$CONFIG_FILE_ENV points to a missing file: '$path'." }
+            val props = Properties()
+            file.inputStream().use { props.load(it) }
+            props.forEach { (k, v) -> merged[k.toString()] = v.toString() }
+          }
+      return merged
     }
   }
 }
