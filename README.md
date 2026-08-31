@@ -1,7 +1,8 @@
 # Restate Kafka ingress integration
 
-A standalone service that turns Kafka records into [Restate](https://restate.dev) invocations. Run
-it as a container next to your Restate deployment.
+A standalone service that bridges the Kafka protocol into Restate, 
+turning Kafka records into [Restate](https://restate.dev) invocations.
+Run it as a container next to your Restate deployment.
 
 ## What it does
 
