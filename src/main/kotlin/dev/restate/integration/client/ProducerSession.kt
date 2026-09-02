@@ -110,7 +110,8 @@ class ProducerSession(
   // ---- orchestration: open -> await close -> back off & retry ----
 
   private suspend fun run(settings: StreamDefaults) {
-    // No records until the server grants the first window.
+    // Keep the source paused while we open the stream; once the stream is attached we resume on its
+    // assumed initial window (see Connection.attach) rather than waiting for a server window grant.
     control.pause()
 
     var lastCommitted: Long? = null
@@ -186,9 +187,15 @@ class ProducerSession(
     private val buffer = ArrayDeque<IngestionInvocation>()
     private var paused = true
 
-    /** Bind the live stream so the pump can write to it. */
+    /**
+     * Bind the live stream so the pump can write to it, and start on its assumed initial window.
+     */
     fun attach(stream: InvocationStream) {
       this.stream = stream
+      // The stream opens already writable (the protocol's guaranteed minimum window), so kick the
+      // pump to resume the source right away instead of waiting for the server's first
+      // WindowUpdate.
+      pump()
     }
 
     /** Half-close the stream (teardown). */
@@ -269,7 +276,9 @@ class ProducerSession(
             .tag("producer_id", producerId)
             .register(registry)
 
-    private val budget = AtomicLong(0)
+    // Seed with the stream's assumed initial window so the gauge is accurate before the first
+    // grant.
+    private val budget = AtomicLong(InvocationStreamImpl.INITIAL_WINDOW_BYTES)
     private val creditGauge =
         Gauge.builder("restate.kafka.integration.producersession.budget", budget) {
               it.get().toDouble()

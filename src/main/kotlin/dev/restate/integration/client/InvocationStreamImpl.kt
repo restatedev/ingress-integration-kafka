@@ -13,7 +13,12 @@ internal class InvocationStreamImpl(
   // Remaining Restate send window, in BYTES, folded into isWritable() so the window never leaks to
   // callers. It may go negative: the protocol allows sending one invocation that overshoots the
   // window, after which isWritable() stays false until the next WindowUpdate replenishes it.
-  private var budget = 0L
+  //
+  // Seeded with the protocol's guaranteed minimum window (INITIAL_WINDOW_BYTES): a freshly opened
+  // stream may send up to that many bytes before the first WindowUpdate, so we don't wait for — and
+  // the server no longer sends — an initial window grant. Later WindowUpdates just increment from
+  // here, which is how the server grows the window up to its configured size (never below the min).
+  private var budget = INITIAL_WINDOW_BYTES
 
   init {
     // Transport-drain axis: a drained socket makes us writable again, if we still have budget.
@@ -46,5 +51,11 @@ internal class InvocationStreamImpl(
     request.end()
     // Poison the budget
     budget = Long.MIN_VALUE
+  }
+
+  companion object {
+    // The ingestion protocol guarantees a minimum initial send window of 32 KiB. The server grows
+    // the window above this via WindowUpdate frames, but never shrinks it below this minimum.
+    const val INITIAL_WINDOW_BYTES = 32L * 1024
   }
 }

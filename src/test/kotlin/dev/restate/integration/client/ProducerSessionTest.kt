@@ -51,13 +51,35 @@ class ProducerSessionTest {
   // ---- flow control ----
 
   @Test
-  fun `records offered before the first window are buffered, not written`() = test {
+  fun `records offered while the stream isn't writable are buffered, not written`() = test {
     it.connect()
 
     it.session.offer(record(0))
     it.session.offer(record(1))
 
     assertThat(it.client.stream.written).isEmpty()
+  }
+
+  @Test
+  fun `an initial window resumes the source without waiting for a server grant`() = test {
+    // The stream opens already writable (the protocol's guaranteed initial window, in miniature).
+    it.client.initialStreamBudget = 1024
+
+    it.connect()
+
+    // No WindowUpdate was needed: attaching the writable stream resumes the source on its own.
+    assertThat(it.control.resumeCount).isEqualTo(1)
+  }
+
+  @Test
+  fun `records on the initial window are written without a server grant`() = test {
+    it.client.initialStreamBudget = it.bytes(record(0), record(1)) + 1
+
+    it.connect()
+    it.session.offer(record(0))
+    it.session.offer(record(1))
+
+    assertThat(it.client.stream.writtenOffsets()).containsExactly(0L, 1L)
   }
 
   @Test
@@ -347,6 +369,13 @@ private class FakeIntegrationClient : IntegrationClient {
   var openCount = 0
   var failOpens = 0
 
+  /**
+   * Initial send window (bytes) stamped onto each opened stream. Defaults to 0 — a stream that
+   * opens not-yet-writable, so tests drive it explicitly with [Env.grantWindow]. Set it positive to
+   * model the protocol's guaranteed initial window (the stream opens already writable).
+   */
+  var initialStreamBudget = 0L
+
   /** The listener/stream of the most recently opened connection. */
   lateinit var listener: InvocationStream.Listener
   var stream = FakeInvocationStream()
@@ -364,15 +393,16 @@ private class FakeIntegrationClient : IntegrationClient {
     }
     this.listener = listener
     startedSettings.add(initialStreamDefaults)
-    return FakeInvocationStream().also { stream = it }
+    return FakeInvocationStream(initialStreamBudget).also { stream = it }
   }
 
   override suspend fun close() {}
 }
 
-private class FakeInvocationStream : InvocationStream {
-  /** Remaining window in **bytes**; the test grants these to simulate windows. */
-  var budget = 0L
+private class FakeInvocationStream(
+    /** Remaining window in **bytes**; the test grants these to simulate windows. */
+    var budget: Long = 0L
+) : InvocationStream {
   val written = mutableListOf<IngestionInvocation>()
   /** Settings sent mid-stream via [updateDefaults]. */
   val settingsSent = mutableListOf<StreamDefaults>()
