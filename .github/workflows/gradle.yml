@@ -30,6 +30,14 @@ jobs:
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v6
 
+    # Pull the e2e Testcontainers images up front so a slow registry pull
+    # doesn't eat into each container's startup timeout.
+    - name: Pre-pull e2e test images
+      run: |
+        docker pull docker.io/apache/kafka-native:4.1.1
+        docker pull ghcr.io/restatedev/restate:main
+        docker pull ghcr.io/restatedev/test-services-java:main
+
     - name: Build with Gradle Wrapper
       run: ./gradlew build
 
