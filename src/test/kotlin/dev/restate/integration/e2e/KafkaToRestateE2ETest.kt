@@ -46,7 +46,7 @@ import org.testcontainers.utility.DockerImageName
 class KafkaToRestateE2ETest {
 
   companion object {
-    private const val RESTATE_IMAGE = "ghcr.io/restatedev/restate:pr5026"
+    private const val RESTATE_IMAGE = "ghcr.io/restatedev/restate:main"
     private const val TEST_SERVICES_IMAGE = "ghcr.io/restatedev/test-services-java:main"
     private const val INGRESS_PORT = 8080
     private const val ADMIN_PORT = 9070
