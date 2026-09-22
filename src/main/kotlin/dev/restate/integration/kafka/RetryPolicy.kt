@@ -6,7 +6,7 @@
 // You can find a copy of the license in file LICENSE in the root
 // directory of this repository or package, or at
 // https://github.com/restatedev/ingress-integration-kafka/blob/main/LICENSE
-package dev.restate.integration.client
+package dev.restate.integration.kafka
 
 import kotlin.math.pow
 import kotlin.time.Duration
@@ -17,7 +17,7 @@ import kotlin.time.Duration.Companion.seconds
  * Fully-described retry schedule for (re)connecting an ingestion stream: a bounded exponential
  * backoff. Shaped after Restate's `InvocationRetryPolicy`, minus its terminal action — here,
  * exhausting [maxAttempts] always escalates the failure to the stream's owner (see
- * [ReconnectingIngestionStream]'s `onGiveUp`).
+ * [dev.restate.integration.kafka.ingestion.PartitionSession]).
  *
  * Immutable configuration. Consume a run via [iterator]: each call starts a fresh [Iterator] whose
  * [Iterator.next] yields the delay to wait before the next attempt, or `null` once [maxAttempts] is

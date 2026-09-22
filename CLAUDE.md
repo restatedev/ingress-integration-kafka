@@ -28,28 +28,34 @@ docker compose up -d       # bring up the full local stack (Kafka + Restate + th
 - JDK 25 toolchain (`kotlin { jvmToolchain(25) }`). The e2e test in particular needs a real JDK 25;
   if `KafkaToRestateE2ETest` misbehaves, that is usually the environment (or the moving `restate:main`
   image), not a code regression.
-- The gRPC types (`dev.restate.ingestion.v1.*`) are **generated** from
-  [`src/main/proto/ingestion_svc.proto`](src/main/proto/ingestion_svc.proto) at build time. Read that
-  proto to understand the wire contract — it is the source of truth for the ingestion protocol.
+- The ingestion transport is **not** in this repo anymore: it comes from the
+  `dev.restate:integration-client` library (Restate's sdk-java), which ships the resilient
+  `ExactlyOnceProducer` / `IntegrationClient` and the generated `dev.restate.ingestion.v1.*` proto
+  types. A `RecordMapper` builds the library's ergonomic `Invocation` / `InvocationMetadata` wrappers,
+  not raw proto. The wire contract lives in sdk-java's `ingestion_svc.proto`.
+- The library is consumed as a `mavenLocal()` SNAPSHOT: run
+  `./gradlew :integration-client:publishToMavenLocal` in your `../sdk-java` checkout first (until it
+  ships to Maven Central).
 
 ## Architecture
 
-The runtime is a short pipeline. Data flows **Kafka record → RecordMapper → ProducerSession → Restate**.
+The runtime is a short pipeline. Data flows **Kafka record → RecordMapper → PartitionSession → Restate**.
 
 ```
 Main.kt
   └─ loads AppConfig (env + optional CONFIG_FILE properties), then launches N ConsumerVerticle instances
        │
 ConsumerVerticle (one KafkaConsumer per Vert.x event loop; N of them)
-  ├─ on partition assigned  → opens one ProducerSession per (topic, partition)
-  ├─ on each record         → recordMapper.toInvocation(record) → session.offer(invocation)
+  ├─ on partition assigned  → opens one PartitionSession per (topic, partition)
+  ├─ on each record         → recordMapper.toInvocation(record) → session.offer(record.offset(), invocation)
   │                            (a null mapping filters the record out)
   └─ on ack from Restate    → commits the Kafka offset
        │
-ProducerSession (client/ProducerSession.kt) — one resilient gRPC `Ingest` stream per partition
-  ├─ streams invocations to Restate with flow control + backpressure (pauses/resumes the partition)
+PartitionSession (kafka/ingestion/PartitionSession.kt) — supervises one sdk ExactlyOnceProducer per partition
+  ├─ trySend()s invocations to Restate with flow control + backpressure (pauses/resumes the partition)
   ├─ on ack (last_committed) → tells the consumer to commit that Kafka offset
-  └─ on stream drop          → reconnects with backoff, rewinds to last committed offset, resends
+  └─ on stream drop          → the sdk producer terminates; the session reconnects with backoff,
+                               rewinds to the last committed offset, and reopens (same producer_id)
 ```
 
 Key files:
@@ -59,28 +65,35 @@ Key files:
 | `kafka/Main.kt` | Entry point; wires Vert.x, metrics, deploys `ConsumerVerticle` × `consumerInstances`. |
 | `kafka/AppConfig.kt` | Merges properties file + env into Kafka config + `RestateConfig` + the `RecordMapper`. |
 | `kafka/RestateConfig.kt` | `restate.*` options via Kafka's `ConfigDef`; instantiates the mapper "the Kafka way". |
-| `kafka/ConsumerVerticle.kt` | The consumer loop; owns the `KafkaConsumer` and its `ProducerSession`s. |
+| `kafka/ConsumerVerticle.kt` | The consumer loop; owns the `KafkaConsumer` and its `PartitionSession`s. |
 | **`kafka/RecordMapper.kt`** | **The extension point.** Record → invocation. This is what you customize. |
 | `kafka/mapper/*` | The two built-in mappers (`StaticRecordMapper`, `JsonDynamicTargetRecordMapper`). |
-| `client/*` | The resilient ingestion client: `ProducerSession`, `IntegrationClient`, `InvocationStream`. |
+| `kafka/ingestion/*` | Glue over the sdk ingestion client: `PartitionSession` (resilient reconnect/rewind supervisor), `VertxMultiEndpointProducerFactory` (Vert.x→`io.grpc.Channel` per endpoint + sdk `IntegrationClient`s), `IngressEndpoint`, `RetryPolicy`. |
 
 ### Concurrency model (important before you touch anything)
 
 Each `ConsumerVerticle` instance runs entirely on **one** Vert.x event-loop thread: its consumer,
-all its `ProducerSession`s, and their gRPC streams share that single context, so there is **no
-locking**. Deploy more instances (`RESTATE_KAFKA_CONSUMER_INSTANCES`) to use more event loops; Kafka
-spreads partitions across them and rebalances automatically. **Do not block the event loop** and do
-not introduce shared mutable state across instances. A `RecordMapper.toInvocation` call runs on this
-thread and must be non-blocking and reasonably fast.
+all its `PartitionSession`s, and the Vert.x-backed gRPC channels share that single context, so there
+is **no locking**. Deploy more instances (`RESTATE_KAFKA_CONSUMER_INSTANCES`) to use more event
+loops; Kafka spreads partitions across them and rebalances automatically. **Do not block the event
+loop** and do not introduce shared mutable state across instances. A `RecordMapper.toInvocation` call
+runs on this thread and must be non-blocking and reasonably fast.
+
+The sdk producer is driven only through its **non-blocking** surface (`trySend`, `flushAsync`,
+`waitAcknowledged`, `close`) — never `send`/`flush`, which block. Its acknowledgement futures may
+complete on a gRPC callback thread, so `PartitionSession` marshals their continuations back onto the
+verticle context before touching consumer/session state.
 
 ### Exactly-once / offset invariant
 
 Deduplication is offset-based, keyed by a stable `producer_id` (here
-`"<groupId>/<topic>/<partition>"`, set in `ConsumerVerticle.openPartition`). The server tracks the
-highest committed offset per producer and silently drops anything not strictly above it. This is why
-Kafka offsets are committed **only after** Restate acks (`enable.auto.commit` is forced to `false` in
-`AppConfig`), and why a reconnect rewinds and resends. **Every invocation must carry a monotonically
-increasing `offset`.** See the long comments in `ingestion_svc.proto` for the exact semantics.
+`"<groupId>/<topic>/<partition>"`, passed to `IntegrationClient.newExactlyOnceProducer` in
+`ConsumerVerticle.openPartition`). The server tracks the highest committed offset per producer and
+silently drops anything not strictly above it. This is why Kafka offsets are committed **only after**
+Restate acks (`enable.auto.commit` is forced to `false` in `RestateKafkaIntegrationConfiguration`), and why a reconnect rewinds
+and resends. **Every invocation carries a monotonically increasing `offset`** — the runtime supplies
+it (`producer.trySend(record.offset(), invocation)`), so a `RecordMapper` never sets it. See the long
+comments in sdk-java's `ingestion_svc.proto` for the exact semantics.
 
 ## Customizing: write a RecordMapper
 
@@ -96,8 +109,8 @@ headers, filtering, and even how the raw Kafka bytes are deserialized.
 interface RecordMapper<K, V> {
   val keyDeserializer: Class<out Deserializer<K>>     // how Kafka bytes → K
   val valueDeserializer: Class<out Deserializer<V>>   // how Kafka bytes → V
-  fun initialDefaults(): StreamDefaults               // stream-wide defaults, set once per partition
-  fun toInvocation(record: ConsumerRecord<K, V>): IngestionInvocation?  // per record; null = filter out
+  fun initialDefaults(): InvocationMetadata           // stream-wide defaults, set once per partition
+  fun toInvocation(record: ConsumerRecord<K, V>): Invocation?  // per record; null = filter out
 }
 ```
 
@@ -107,30 +120,30 @@ Four things a mapper controls:
    copies `keyDeserializer`/`valueDeserializer` into the Kafka consumer config, so `<K, V>` are
    whatever your deserializers produce. `StaticRecordMapper` uses `String`/`ByteArray`;
    `JsonDynamicTargetRecordMapper` uses `String`/`JsonNode` (with its own `JsonNodeDeserializer`).
-2. **Defaults vs. per-record (`initialDefaults` vs. `toInvocation`).** `initialDefaults()` returns a
-   `StreamDefaults` (typealias for the `IngestionDefaults` proto) applied to every record on that
-   partition's stream. `toInvocation()` sets only what varies per record; a field set on the
-   invocation overrides the default. **Put anything constant in `initialDefaults()`** — it is set once
-   and is cheaper and clearer than repeating it on every record. (`headers` are the exception: an
-   invocation's `additional_headers` are *appended* to the defaults' headers, not replaced.)
-3. **The mapping itself.** Build an `IngestionInvocation` — see fields below.
+2. **Defaults vs. per-record (`initialDefaults` vs. `toInvocation`).** `initialDefaults()` returns an
+   `InvocationMetadata` (the sdk's stream-defaults type) applied to every record on that partition's
+   stream. `toInvocation()` sets only what varies per record; a field set on the invocation overrides
+   the default. **Put anything constant in `initialDefaults()`** — it is set once and is cheaper and
+   clearer than repeating it on every record. (Headers are the exception: an invocation's headers are
+   *appended* to the defaults' headers, not replaced.)
+3. **The mapping itself.** Build an `Invocation` — see fields below.
 4. **Filtering.** Return `null` from `toInvocation` to drop a record (it is skipped, not sent).
 
-### `IngestionInvocation` fields you can set
+### `Invocation` fields you can set
 
-(From `ingestion_svc.proto`; build with `IngestionInvocation.newBuilder()`.)
+Build with `Invocation.create()` (from the `dev.restate:integration-client` library) and its fluent
+setters. There is **no `offset`** — the runtime assigns it from the Kafka record.
 
-| Field | Notes |
-|-------|-------|
-| `offset` | **Required. Set it to `record.offset()`.** Drives dedup/exactly-once; must increase monotonically per partition. |
-| `service` / `handler` | Target. Required (here, or via `initialDefaults()`). |
-| `key` | The Virtual Object / Workflow key. **Required by Restate when the target is a VO or Workflow.** |
-| `payload` | `bytes`. A null Kafka value (tombstone) → empty payload. |
-| `idempotencyKey` | Optional idempotency key for the invocation. |
-| `scope` / `limitKey` | Optional concurrency scope / limiting key. |
-| `additionalHeaders` | Appended to the stream defaults' headers; delivered as request headers. |
-| `traceparent` / `tracestate` | W3C trace context; propagate from Kafka headers if present. |
-| `delayMs` **or** `invokeTimeTsMs` | Optional scheduling (mutually exclusive). |
+| Setter | Notes |
+|--------|-------|
+| `setServiceName` / `setHandlerName` | Target. Required (here, or via `initialDefaults()`). |
+| `setKey` | The Virtual Object / Workflow key. **Required by Restate when the target is a VO or Workflow.** |
+| `setBody(ByteArray?)` | The payload. A null Kafka value (tombstone) → `setBody(null)` → empty payload. |
+| `setIdempotencyKey` | Optional idempotency key for the invocation. |
+| `setScope` / `setLimitKey` | Optional concurrency scope / limiting key. |
+| `putHeader(k, v)` | Appended to the stream defaults' headers; delivered as request headers. |
+| `setTraceparent` / `setTracestate` | W3C trace context; propagate from Kafka headers if present. |
+| `setInvokeTime(Instant)` | Optional scheduling (deliver at an absolute time). |
 
 ### How a mapper is selected and configured
 
@@ -162,16 +175,14 @@ class MyMapper : RecordMapper<String, ByteArray>, Configurable {
       ?: throw IllegalArgumentException("restate.record.mapper.service is required")
   }
 
-  override fun initialDefaults(): StreamDefaults =
-    StreamDefaults.newBuilder().setService(service).setHandler("onEvent").build()
+  override fun initialDefaults(): InvocationMetadata =
+    InvocationMetadata.create().setServiceName(service).setHandlerName("onEvent")
 
-  override fun toInvocation(record: ConsumerRecord<String, ByteArray>): IngestionInvocation? {
+  override fun toInvocation(record: ConsumerRecord<String, ByteArray>): Invocation? {
     if (record.value() == null) return null                 // filter tombstones, for example
-    return IngestionInvocation.newBuilder()
-      .setOffset(record.offset())                           // never forget this
-      .apply { record.key()?.let { key = it } }             // VO/Workflow key
-      .setPayload(ByteString.copyFrom(record.value()))
-      .build()
+    return Invocation.create()
+      .apply { record.key()?.let { setKey(it) } }           // VO/Workflow key
+      .setBody(record.value())                              // the runtime assigns the offset
   }
 }
 ```
@@ -189,7 +200,7 @@ The two shipped mappers are the reference implementations — read them before w
 ### Testing a mapper
 
 Mappers are plain, synchronous, and trivially unit-testable — no Vert.x, no Kafka broker. Construct a
-`ConsumerRecord` directly and assert on the resulting `IngestionInvocation`. Copy the pattern in
+`ConsumerRecord` directly and assert on the resulting `Invocation`. Copy the pattern in
 [`StaticRecordMapperTest`](src/test/kotlin/dev/restate/integration/kafka/mapper/StaticRecordMapperTest.kt)
 or `JsonDynamicTargetRecordMapperTest`. Always add a test for a new mapper.
 
@@ -214,7 +225,7 @@ later wins) overlaid by environment variables (**env always wins**). Keys split 
 - `restate.record.mapper.*` → handed to your mapper's `configure()`.
 
 The full option list is documented in [`CONFIGURATION.md`](CONFIGURATION.md) — update it when you add
-config. See [`AppConfigTest`](src/test/kotlin/dev/restate/integration/kafka/AppConfigTest.kt) for the
+config. See [`RestateKafkaIntegrationConfigurationTest`](src/test/kotlin/dev/restate/integration/kafka/AppConfigTest.kt) for the
 merge/precedence rules.
 
 ## Conventions

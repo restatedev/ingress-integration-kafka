@@ -8,8 +8,7 @@
 // https://github.com/restatedev/ingress-integration-kafka/blob/main/LICENSE
 package dev.restate.integration.kafka
 
-import dev.restate.integration.client.IngressEndpoint
-import dev.restate.integration.client.RetryPolicy
+import dev.restate.integration.kafka.ingestion.IngressEndpoint
 import dev.restate.integration.kafka.mapper.StaticRecordMapper
 import io.vertx.core.VertxOptions
 import java.net.URI
@@ -26,10 +25,10 @@ import org.apache.kafka.common.config.ConfigDef.Type
  * parsing, defaults, range validation and unknown-key warnings as any Kafka client config — the
  * "Kafka way", reusing the same machinery as [org.apache.kafka.clients.consumer.ConsumerConfig].
  *
- * [AppConfig.load] builds the source map (properties file overlaid by env) and constructs this; the
+ * [RestateKafkaIntegrationConfiguration.load] builds the source map (properties file overlaid by env) and constructs this; the
  * keys are the `restate.*` file keys (plus `topics`), mapped from `RESTATE_*` (and `KAFKA_TOPICS`)
  * in the environment. Typed accessors below expose the parsed values; bad types/ranges surface as
- * [org.apache.kafka.common.config.ConfigException] (wrapped by [AppConfig.load]).
+ * [org.apache.kafka.common.config.ConfigException] (wrapped by [RestateKafkaIntegrationConfiguration.load]).
  *
  * The record mapper is loaded the "Kafka way": [recordMapper] instantiates the class named by
  * `restate.record.mapper.class` (default [dev.restate.integration.kafka.mapper.StaticRecordMapper])

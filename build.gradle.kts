@@ -10,7 +10,6 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
   kotlin("jvm") version "2.3.21"
-  id("com.google.protobuf") version "0.10.0"
   id("com.google.cloud.tools.jib") version "3.5.3"
   id("com.diffplug.spotless") version "8.8.0"
   id("com.github.jk1.dependency-license-report") version "3.1.4"
@@ -25,10 +24,20 @@ version =
     (findProperty("version")?.toString()?.takeUnless { it.isBlank() || it == "unspecified" })
         ?: "0.1-SNAPSHOT"
 
-repositories { mavenCentral() }
+// mavenLocal() resolves the dev.restate:integration-client SNAPSHOT published from ../sdk-java
+// (`./gradlew :integration-client:publishToMavenLocal`) until it ships to Maven Central.
+repositories {
+  mavenLocal()
+  mavenCentral()
+}
 
 val vertxVersion = "5.1.5"
-val protobufVersion = "4.29.3"
+
+// The Restate ingestion client we consume from sdk-java (branch integration-client). It brings the
+// generated ingestion proto/gRPC types transitively (exported as `api`), so we no longer compile
+// our
+// own copy of ingestion_svc.proto.
+val integrationClientVersion = "2.10.0-SNAPSHOT"
 
 // Silence the JDK 24+ "sun.misc.Unsafe::... has been called" warnings: protobuf-java still uses
 // Unsafe for fast (de)serialization. `allow` keeps it working without the per-call-site warning.
@@ -39,10 +48,18 @@ dependencies {
 
   implementation("io.vertx:vertx-core")
   implementation("io.vertx:vertx-launcher-application")
-  implementation("io.vertx:vertx-grpc-client")
+  // vertx-grpcio-client adapts a Vert.x gRPC client into an io.grpc.Channel (GrpcIoClientChannel),
+  // which we feed to the sdk-java ingestion client so the transport runs on the Vert.x event loop.
+  implementation("io.vertx:vertx-grpcio-client")
   implementation("io.vertx:vertx-kafka-client")
   implementation("io.vertx:vertx-lang-kotlin")
   implementation("io.vertx:vertx-lang-kotlin-coroutines")
+
+  // The Restate ingestion client (ExactlyOnceProducer + IntegrationClient). We supply our own
+  // Vert.x-backed io.grpc.Channel, so exclude the sdk's default grpc-netty-shaded transport.
+  implementation("dev.restate:integration-client:$integrationClientVersion") {
+    exclude(group = "io.grpc", module = "grpc-netty-shaded")
+  }
 
   // Metrics: Vert.x Micrometer integration (event loops, HTTP/2 client to Restate, embedded
   // Prometheus scrape server) backed by a Prometheus registry. micrometer-registry-prometheus
@@ -51,21 +68,12 @@ dependencies {
   // version Vert.x 5.1.5 resolves (io.micrometer:micrometer-core:1.16.6) to keep them aligned.
   implementation("io.vertx:vertx-micrometer-metrics")
   implementation("io.micrometer:micrometer-registry-prometheus:1.16.6")
-  // ProducerSession uses coroutines (launch/CoroutineScope/delay) directly.
+  // PartitionSession uses coroutines (launch/CoroutineScope/delay) directly.
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
-
-  // gRPC message (de)serialization + generated message types.
-  implementation("com.google.protobuf:protobuf-java:$protobufVersion")
 
   // Jackson for JSON-based record mappers (JsonDynamicTargetRecordMapper): JsonNode + JsonPointer.
   // Vert.x ships jackson-core but leaves databind optional, so add it (aligned to Vert.x's 2.21.x).
   implementation("com.fasterxml.jackson.core:jackson-databind:2.21.5")
-
-  // The Vert.x gRPC codegen also emits a server stub (IngestionSvcGrpcService) that imports
-  // io.vertx.grpc.server.*. We only run the client at runtime, so keep the server API
-  // compile-only here (the generated service class is never loaded in production) and pull it
-  // in fully for tests, where the in-process fake IngestionSvc server uses it.
-  compileOnly("io.vertx:vertx-grpc-server")
 
   // Logging: our code and Vert.x use the Log4j2 API directly. Kafka hard-depends on SLF4J, so
   // its logs are bridged into Log4j2 too.
@@ -102,16 +110,6 @@ application {
   mainClass.set("dev.restate.integration.kafka.MainKt")
   // Applies to `./gradlew run` and the installDist launch script (Jib sets its own flags below).
   applicationDefaultJvmArgs = runtimeJvmArgs
-}
-
-protobuf {
-  protoc { artifact = "com.google.protobuf:protoc:$protobufVersion" }
-  plugins { id("vertx") { artifact = "io.vertx:vertx-grpc-protoc-plugin2:$vertxVersion" } }
-  generateProtoTasks {
-    // Register the Vert.x gRPC generator (emits both the *Client and *Service stubs
-    // alongside protoc's built-in Java message classes).
-    all().forEach { it.plugins { id("vertx") } }
-  }
 }
 
 tasks.test {

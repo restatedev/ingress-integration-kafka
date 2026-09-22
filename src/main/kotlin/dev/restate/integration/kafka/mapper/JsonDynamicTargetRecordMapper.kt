@@ -11,9 +11,8 @@ package dev.restate.integration.kafka.mapper
 import com.fasterxml.jackson.core.JsonPointer
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.google.protobuf.ByteString
-import dev.restate.ingestion.v1.IngestionInvocation
-import dev.restate.integration.client.StreamDefaults
+import dev.restate.integration.Invocation
+import dev.restate.integration.InvocationMetadata
 import dev.restate.integration.kafka.RecordMapper
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.Configurable
@@ -34,11 +33,10 @@ import org.apache.kafka.common.serialization.StringDeserializer
  * `RESTATE_RECORD_MAPPER_SERVICE_VALUE=OrderService`,
  * `RESTATE_RECORD_MAPPER_HANDLER_POINTER=/type`, `RESTATE_RECORD_MAPPER_KEY_FROMKEY=true`.
  *
- * Static fields become [Settings] defaults (set once in [initialDefaults]); dynamically-derived
- * fields (from the key or a JSON pointer) are set per-[Invocation], overriding those defaults. The
- * payload is the (re-serialized) JSON; the `kafka.*` metadata headers (unless `kafka.metadata` is
- * disabled) and W3C trace context are propagated from the Kafka record exactly like
- * [StaticRecordMapper].
+ * Static fields become defaults (set once in [initialDefaults]); dynamically-derived fields (from
+ * the key or a JSON pointer) are set per-[Invocation], overriding those defaults. The payload is
+ * the (re-serialized) JSON; the `kafka.*` metadata headers (unless `kafka.metadata` is disabled)
+ * and W3C trace context are propagated from the Kafka record exactly like [StaticRecordMapper].
  */
 class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurable {
 
@@ -100,61 +98,58 @@ class JsonDynamicTargetRecordMapper : RecordMapper<String, JsonNode>, Configurab
     kafkaMetadata = configs.kafkaMetadataEnabled()
   }
 
-  // Static fields become defaults on the stream Settings (the producer id is stamped separately in
-  // the Start handshake frame, not here).
-  override fun initialDefaults(): StreamDefaults {
-    val builder = StreamDefaults.newBuilder()
-    (service as? FieldSource.Static)?.let { builder.service = it.value }
-    (handler as? FieldSource.Static)?.let { builder.handler = it.value }
-    (scope as? FieldSource.Static)?.let { builder.scope = it.value }
-    (limitKey as? FieldSource.Static)?.let { builder.limitKey = it.value }
-    return builder.build()
+  // Static fields become stream defaults (the producer id is stamped separately in the Start
+  // handshake frame, not here).
+  override fun initialDefaults(): InvocationMetadata {
+    val defaults = InvocationMetadata.create()
+    (service as? FieldSource.Static)?.let { defaults.setServiceName(it.value) }
+    (handler as? FieldSource.Static)?.let { defaults.setHandlerName(it.value) }
+    (scope as? FieldSource.Static)?.let { defaults.setScope(it.value) }
+    (limitKey as? FieldSource.Static)?.let { defaults.setLimitKey(it.value) }
+    return defaults
   }
 
-  override fun toInvocation(record: ConsumerRecord<String, JsonNode>): IngestionInvocation {
+  override fun toInvocation(record: ConsumerRecord<String, JsonNode>): Invocation {
     val recordKey = record.key()
     val value = record.value()
 
-    val builder =
-        IngestionInvocation.newBuilder()
-            .setOffset(record.offset())
-            .setPayload(
-                value?.let { ByteString.copyFrom(MAPPER.writeValueAsBytes(it)) } ?: ByteString.EMPTY
-            )
+    val invocation = Invocation.create().setBody(value?.let { MAPPER.writeValueAsBytes(it) })
 
     if (kafkaMetadata) {
-      builder.putKafkaMetadataHeaders(record)
+      invocation.putKafkaMetadataHeaders(record)
     }
 
-    // service/handler/scope/limit_key: static ones are Settings defaults; set per-record only when
-    // derived dynamically (from the key or a JSON pointer).
+    // service/handler/scope/limit_key: static ones are defaults; set per-record only when derived
+    // dynamically (from the key or a JSON pointer).
     if (service !is FieldSource.Static) {
-      builder.service = extractRequired(service, SERVICE, recordKey, value, record.offset())
+      invocation.setServiceName(
+          extractRequired(service, SERVICE, recordKey, value, record.offset())
+      )
     }
     if (handler !is FieldSource.Static) {
-      builder.handler = extractRequired(handler, HANDLER, recordKey, value, record.offset())
+      invocation.setHandlerName(
+          extractRequired(handler, HANDLER, recordKey, value, record.offset())
+      )
     }
-    dynamicOverride(scope, recordKey, value)?.let { builder.scope = it }
-    dynamicOverride(limitKey, recordKey, value)?.let { builder.limitKey = it }
+    dynamicOverride(scope, recordKey, value)?.let { invocation.setScope(it) }
+    dynamicOverride(limitKey, recordKey, value)?.let { invocation.setLimitKey(it) }
 
-    // key + idempotency key have no Settings field, so they are always per-record.
-    key?.extract(recordKey, value)?.let { builder.key = it }
-    idempotencyKey?.extract(recordKey, value)?.let { builder.idempotencyKey = it }
+    // key + idempotency key have no defaults field, so they are always per-record.
+    key?.extract(recordKey, value)?.let { invocation.setKey(it) }
+    idempotencyKey?.extract(recordKey, value)?.let { invocation.setIdempotencyKey(it) }
 
     for (header in record.headers()) {
       val v = header.value() ?: continue
       when (header.key()) {
-        TRACEPARENT -> builder.traceparent = String(v, Charsets.UTF_8)
-        TRACESTATE -> builder.tracestate = String(v, Charsets.UTF_8)
+        TRACEPARENT -> invocation.setTraceparent(String(v, Charsets.UTF_8))
+        TRACESTATE -> invocation.setTracestate(String(v, Charsets.UTF_8))
       }
     }
 
-    return builder.build()
+    return invocation
   }
 
-  /**
-   * A per-record override for an optional field: null when unset or static (a Settings default).
-   */
+  /** A per-record override for an optional field: null when unset or static (a default). */
   private fun dynamicOverride(source: FieldSource?, recordKey: String?, value: JsonNode?): String? =
       if (source == null || source is FieldSource.Static) null else source.extract(recordKey, value)
 

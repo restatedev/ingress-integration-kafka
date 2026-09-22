@@ -8,7 +8,7 @@
 // https://github.com/restatedev/ingress-integration-kafka/blob/main/LICENSE
 package dev.restate.integration.kafka
 
-import dev.restate.integration.client.IngressEndpoint
+import dev.restate.integration.kafka.ingestion.IngressEndpoint
 import io.vertx.core.VertxOptions
 import java.io.File
 import java.nio.file.Path
@@ -17,7 +17,7 @@ import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
-class AppConfigTest {
+class RestateKafkaIntegrationConfigurationTest {
 
   private fun baseEnv() =
       mutableMapOf(
@@ -39,7 +39,7 @@ class AppConfigTest {
           this["KAFKA_FOO___BAR"] = "triple" // triple underscore -> dash
         }
 
-    val cfg = AppConfig.load(env)
+    val cfg = RestateKafkaIntegrationConfiguration.load(env)
 
     assertThat(cfg.kafkaConsumerConfig)
         .containsEntry("bootstrap.servers", "broker:9092")
@@ -55,12 +55,12 @@ class AppConfigTest {
     val env = baseEnv()
     env["KAFKA_AUTO_OFFSET_RESET"] = "earliest"
 
-    val cfg = AppConfig.load(env)
+    val cfg = RestateKafkaIntegrationConfiguration.load(env)
 
     assertThat(cfg.groupId).isEqualTo("my-group")
     assertThat(cfg.restate.topics).containsExactly("orders")
-    assertThat(cfg.recordMapper.initialDefaults().service).isEqualTo("Greeter")
-    assertThat(cfg.recordMapper.initialDefaults().handler).isEqualTo("greet")
+    assertThat(cfg.recordMapper.initialDefaults().serviceName).isEqualTo("Greeter")
+    assertThat(cfg.recordMapper.initialDefaults().handlerName).isEqualTo("greet")
     assertThat(cfg.restate.ingress).containsOnly(IngressEndpoint("localhost", 8080, false))
     // Defaults to Vert.x's event-loop pool size (one consumer instance per event loop).
     assertThat(cfg.restate.consumerInstances).isEqualTo(VertxOptions.DEFAULT_EVENT_LOOP_POOL_SIZE)
@@ -76,7 +76,7 @@ class AppConfigTest {
     env["KAFKA_ENABLE_AUTO_COMMIT"] = "true"
     env["KAFKA_VALUE_DESERIALIZER"] = "org.apache.kafka.common.serialization.StringDeserializer"
 
-    val cfg = AppConfig.load(env)
+    val cfg = RestateKafkaIntegrationConfiguration.load(env)
 
     assertThat(cfg.kafkaConsumerConfig)
         .containsEntry("enable.auto.commit", "false")
@@ -92,7 +92,7 @@ class AppConfigTest {
 
   @Test
   fun `does not forward KAFKA_TOPICS as a kafka property`() {
-    val cfg = AppConfig.load(baseEnv())
+    val cfg = RestateKafkaIntegrationConfiguration.load(baseEnv())
     assertThat(cfg.kafkaConsumerConfig).doesNotContainKey("topics")
   }
 
@@ -100,7 +100,7 @@ class AppConfigTest {
   fun `parses multiple topics and trims whitespace`() {
     val env = baseEnv()
     env["KAFKA_TOPICS"] = " orders , payments , shipments "
-    val cfg = AppConfig.load(env)
+    val cfg = RestateKafkaIntegrationConfiguration.load(env)
     assertThat(cfg.restate.topics).containsExactly("orders", "payments", "shipments")
   }
 
@@ -108,21 +108,21 @@ class AppConfigTest {
   fun `env overrides properties file`() {
     val file = mapOf("bootstrap.servers" to "file-broker:9092", "group.id" to "file-group")
     val env = baseEnv() // KAFKA_BOOTSTRAP_SERVERS=broker:9092, KAFKA_GROUP_ID=my-group
-    val cfg = AppConfig.load(env, fileConfig = file)
+    val cfg = RestateKafkaIntegrationConfiguration.load(env, fileConfig = file)
     assertThat(cfg.kafkaConsumerConfig).containsEntry("bootstrap.servers", "broker:9092")
     assertThat(cfg.groupId).isEqualTo("my-group")
   }
 
   @Test
   fun `loadPropertiesFiles returns empty for null or blank`() {
-    assertThat(AppConfig.loadPropertiesFiles(null)).isEmpty()
-    assertThat(AppConfig.loadPropertiesFiles("   ")).isEmpty()
+    assertThat(RestateKafkaIntegrationConfiguration.loadPropertiesFiles(null)).isEmpty()
+    assertThat(RestateKafkaIntegrationConfiguration.loadPropertiesFiles("   ")).isEmpty()
   }
 
   @Test
   fun `loadPropertiesFiles reads a single file`(@TempDir dir: Path) {
     val file = writeProps(dir, "a.properties", "bootstrap.servers=file-broker:9092", "group.id=g")
-    assertThat(AppConfig.loadPropertiesFiles(file))
+    assertThat(RestateKafkaIntegrationConfiguration.loadPropertiesFiles(file))
         .containsEntry("bootstrap.servers", "file-broker:9092")
         .containsEntry("group.id", "g")
   }
@@ -132,7 +132,7 @@ class AppConfigTest {
     val first = writeProps(dir, "first.properties", "bootstrap.servers=first:9092", "group.id=g")
     val second = writeProps(dir, "second.properties", "bootstrap.servers=second:9092")
 
-    val merged = AppConfig.loadPropertiesFiles("$first,$second")
+    val merged = RestateKafkaIntegrationConfiguration.loadPropertiesFiles("$first,$second")
 
     // Later file overrides the earlier one on collision, but non-overridden keys are kept.
     assertThat(merged)
@@ -145,7 +145,7 @@ class AppConfigTest {
     val first = writeProps(dir, "first.properties", "a=1")
     val second = writeProps(dir, "second.properties", "b=2")
 
-    val merged = AppConfig.loadPropertiesFiles("  $first , , $second  ,")
+    val merged = RestateKafkaIntegrationConfiguration.loadPropertiesFiles("  $first , , $second  ,")
 
     assertThat(merged).containsEntry("a", "1").containsEntry("b", "2")
   }
@@ -155,7 +155,7 @@ class AppConfigTest {
     val existing = writeProps(dir, "a.properties", "a=1")
     val missing = dir.resolve("nope.properties").toString()
 
-    assertThatThrownBy { AppConfig.loadPropertiesFiles("$existing,$missing") }
+    assertThatThrownBy { RestateKafkaIntegrationConfiguration.loadPropertiesFiles("$existing,$missing") }
         .isInstanceOf(IllegalArgumentException::class.java)
         .hasMessageContaining("missing file")
         .hasMessageContaining(missing)
@@ -165,7 +165,7 @@ class AppConfigTest {
   fun `parses https ingress url as TLS with default port`() {
     val env = baseEnv()
     env["RESTATE_INGRESS_URL"] = "https://ingress.example.com"
-    val cfg = AppConfig.load(env)
+    val cfg = RestateKafkaIntegrationConfiguration.load(env)
     assertThat(cfg.restate.ingress).containsOnly(IngressEndpoint("ingress.example.com", 443, true))
   }
 
@@ -173,7 +173,7 @@ class AppConfigTest {
   fun `parses multiple ingress urls`() {
     val env = baseEnv()
     env["RESTATE_INGRESS_URL"] = "https://ingress1.example.com, https://ingress2.example.com"
-    val cfg = AppConfig.load(env)
+    val cfg = RestateKafkaIntegrationConfiguration.load(env)
     assertThat(cfg.restate.ingress)
         .containsExactly(
             IngressEndpoint("ingress1.example.com", 443, true),
@@ -185,12 +185,12 @@ class AppConfigTest {
   fun `honours RESTATE_KAFKA_CONSUMER_INSTANCES override`() {
     val env = baseEnv()
     env["RESTATE_KAFKA_CONSUMER_INSTANCES"] = "3"
-    assertThat(AppConfig.load(env).restate.consumerInstances).isEqualTo(3)
+    assertThat(RestateKafkaIntegrationConfiguration.load(env).restate.consumerInstances).isEqualTo(3)
   }
 
   @Test
   fun `metrics are enabled by default on port 9464`() {
-    val cfg = AppConfig.load(baseEnv())
+    val cfg = RestateKafkaIntegrationConfiguration.load(baseEnv())
     assertThat(cfg.restate.metricsEnabled).isTrue()
     assertThat(cfg.restate.metricsPort).isEqualTo(9464)
   }
@@ -200,7 +200,7 @@ class AppConfigTest {
     val env = baseEnv()
     env["RESTATE_METRICS_ENABLED"] = "false"
     env["RESTATE_METRICS_PORT"] = "8081"
-    val cfg = AppConfig.load(env)
+    val cfg = RestateKafkaIntegrationConfiguration.load(env)
     assertThat(cfg.restate.metricsEnabled).isFalse()
     assertThat(cfg.restate.metricsPort).isEqualTo(8081)
   }
@@ -208,7 +208,7 @@ class AppConfigTest {
   @Test
   fun `rejects an out-of-range metrics port`() {
     assertThatThrownBy {
-          AppConfig.load(baseEnv().apply { this["RESTATE_METRICS_PORT"] = "70000" })
+          RestateKafkaIntegrationConfiguration.load(baseEnv().apply { this["RESTATE_METRICS_PORT"] = "70000" })
         }
         .isInstanceOf(IllegalArgumentException::class.java)
   }
@@ -216,7 +216,7 @@ class AppConfigTest {
   @Test
   fun `rejects missing bootstrap servers`() {
     val env = baseEnv().apply { remove("KAFKA_BOOTSTRAP_SERVERS") }
-    assertThatThrownBy { AppConfig.load(env) }
+    assertThatThrownBy { RestateKafkaIntegrationConfiguration.load(env) }
         .isInstanceOf(IllegalArgumentException::class.java)
         .hasMessageContaining("bootstrap.servers")
   }
@@ -224,7 +224,7 @@ class AppConfigTest {
   @Test
   fun `rejects missing group id`() {
     val env = baseEnv().apply { remove("KAFKA_GROUP_ID") }
-    assertThatThrownBy { AppConfig.load(env) }
+    assertThatThrownBy { RestateKafkaIntegrationConfiguration.load(env) }
         .isInstanceOf(IllegalArgumentException::class.java)
         .hasMessageContaining("group.id")
   }
@@ -232,7 +232,7 @@ class AppConfigTest {
   @Test
   fun `rejects missing topics`() {
     val env = baseEnv().apply { remove("KAFKA_TOPICS") }
-    assertThatThrownBy { AppConfig.load(env) }
+    assertThatThrownBy { RestateKafkaIntegrationConfiguration.load(env) }
         .isInstanceOf(IllegalArgumentException::class.java)
         .hasMessageContaining("topics")
   }
@@ -240,12 +240,12 @@ class AppConfigTest {
   @Test
   fun `rejects missing target service and handler`() {
     assertThatThrownBy {
-          AppConfig.load(baseEnv().apply { remove("RESTATE_RECORD_MAPPER_SERVICE") })
+          RestateKafkaIntegrationConfiguration.load(baseEnv().apply { remove("RESTATE_RECORD_MAPPER_SERVICE") })
         }
         .isInstanceOf(IllegalArgumentException::class.java)
         .hasMessageContaining("restate.record.mapper.service")
     assertThatThrownBy {
-          AppConfig.load(baseEnv().apply { remove("RESTATE_RECORD_MAPPER_HANDLER") })
+          RestateKafkaIntegrationConfiguration.load(baseEnv().apply { remove("RESTATE_RECORD_MAPPER_HANDLER") })
         }
         .isInstanceOf(IllegalArgumentException::class.java)
         .hasMessageContaining("restate.record.mapper.handler")
@@ -254,7 +254,7 @@ class AppConfigTest {
   @Test
   fun `rejects invalid ingress url scheme`() {
     val env = baseEnv().apply { this["RESTATE_INGRESS_URL"] = "tcp://foo:1234" }
-    assertThatThrownBy { AppConfig.load(env) }
+    assertThatThrownBy { RestateKafkaIntegrationConfiguration.load(env) }
         .isInstanceOf(IllegalArgumentException::class.java)
         .hasMessageContaining("http or https")
   }
@@ -262,11 +262,11 @@ class AppConfigTest {
   @Test
   fun `rejects non-integer and non-positive instance counts`() {
     assertThatThrownBy {
-          AppConfig.load(baseEnv().apply { this["RESTATE_KAFKA_CONSUMER_INSTANCES"] = "abc" })
+          RestateKafkaIntegrationConfiguration.load(baseEnv().apply { this["RESTATE_KAFKA_CONSUMER_INSTANCES"] = "abc" })
         }
         .isInstanceOf(IllegalArgumentException::class.java)
     assertThatThrownBy {
-          AppConfig.load(baseEnv().apply { this["RESTATE_KAFKA_CONSUMER_INSTANCES"] = "0" })
+          RestateKafkaIntegrationConfiguration.load(baseEnv().apply { this["RESTATE_KAFKA_CONSUMER_INSTANCES"] = "0" })
         }
         .isInstanceOf(IllegalArgumentException::class.java)
   }
