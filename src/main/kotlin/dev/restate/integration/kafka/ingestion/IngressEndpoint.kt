@@ -6,7 +6,7 @@
 // You can find a copy of the license in file LICENSE in the root
 // directory of this repository or package, or at
 // https://github.com/restatedev/ingress-integration-kafka/blob/main/LICENSE
-package dev.restate.integration.client
+package dev.restate.integration.kafka.ingestion
 
 /** Where to reach the Restate ingestion gRPC endpoint. */
 data class IngressEndpoint(

@@ -23,7 +23,7 @@ import org.apache.kafka.common.config.ConfigException
  * - [recordMapper]: the configured [RecordMapper], instantiated eagerly here so a bad mapper config
  *   fails at startup.
  */
-data class AppConfig(
+data class RestateKafkaIntegrationConfiguration(
     val kafkaConsumerConfig: Map<String, String>,
     val restate: RestateConfig,
     val recordMapper: RecordMapper<Any?, Any?>,
@@ -62,7 +62,7 @@ data class AppConfig(
           }
         }
 
-    fun load(): AppConfig {
+    fun load(): RestateKafkaIntegrationConfiguration {
       val fileConfig = loadPropertiesFiles(System.getenv(CONFIG_FILE_ENV))
       return load(System.getenv(), fileConfig)
     }
@@ -76,7 +76,7 @@ data class AppConfig(
     internal fun load(
         env: Map<String, String>,
         fileConfig: Map<String, String> = emptyMap(),
-    ): AppConfig {
+    ): RestateKafkaIntegrationConfiguration {
       // 1. Restate options + record mapper. Built first (and eagerly, so a bad mapper config fails
       //    here, not at deploy) because the mapper dictates the Kafka key/value deserializers.
       //    `restate.*` (+ `topics`) file keys, overlaid by RESTATE_*/KAFKA_TOPICS env (env wins).
@@ -129,7 +129,7 @@ data class AppConfig(
       }
 
       @Suppress("UNCHECKED_CAST")
-      return AppConfig(
+      return RestateKafkaIntegrationConfiguration(
           kafkaConsumerConfig = kafka,
           restate = restate,
           recordMapper = recordMapper as RecordMapper<Any?, Any?>,

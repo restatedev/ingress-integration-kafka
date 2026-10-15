@@ -8,7 +8,7 @@
 // https://github.com/restatedev/ingress-integration-kafka/blob/main/LICENSE
 package dev.restate.integration.kafka.mapper
 
-import dev.restate.ingestion.v1.IngestionInvocation
+import dev.restate.integration.Invocation
 import org.apache.kafka.clients.consumer.ConsumerRecord
 
 /**
@@ -25,10 +25,8 @@ internal fun Map<String, *>.kafkaMetadataEnabled(): Boolean =
     (this[KAFKA_METADATA] as? String)?.takeIf { it.isNotBlank() }?.toBoolean() ?: true
 
 /** Attach the `kafka.topic`/`kafka.partition`/`kafka.offset`/`kafka.timestamp` headers. */
-internal fun IngestionInvocation.Builder.putKafkaMetadataHeaders(
-    record: ConsumerRecord<*, *>
-): IngestionInvocation.Builder =
-    putAdditionalHeaders("kafka.topic", record.topic())
-        .putAdditionalHeaders("kafka.partition", record.partition().toString())
-        .putAdditionalHeaders("kafka.offset", record.offset().toString())
-        .putAdditionalHeaders("kafka.timestamp", record.timestamp().toString())
+internal fun Invocation.putKafkaMetadataHeaders(record: ConsumerRecord<*, *>): Invocation =
+    putHeader("kafka.topic", record.topic())
+        .putHeader("kafka.partition", record.partition().toString())
+        .putHeader("kafka.offset", record.offset().toString())
+        .putHeader("kafka.timestamp", record.timestamp().toString())

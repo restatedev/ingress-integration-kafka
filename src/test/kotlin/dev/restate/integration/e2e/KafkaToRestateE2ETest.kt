@@ -8,8 +8,8 @@
 // https://github.com/restatedev/ingress-integration-kafka/blob/main/LICENSE
 package dev.restate.integration.e2e
 
-import dev.restate.integration.kafka.AppConfig
 import dev.restate.integration.kafka.ConsumerVerticle
+import dev.restate.integration.kafka.RestateKafkaIntegrationConfiguration
 import io.vertx.core.Vertx
 import java.net.URI
 import java.net.http.HttpClient
@@ -106,7 +106,7 @@ class KafkaToRestateE2ETest {
 
       vertx = Vertx.vertx()
       val config =
-          AppConfig.load(
+          RestateKafkaIntegrationConfiguration.load(
               mapOf(
                   "KAFKA_BOOTSTRAP_SERVERS" to kafka.hostBootstrapServers(),
                   "KAFKA_GROUP_ID" to "e2e",

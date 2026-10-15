@@ -8,17 +8,22 @@
 // https://github.com/restatedev/ingress-integration-kafka/blob/main/LICENSE
 package dev.restate.integration.kafka
 
-import dev.restate.ingestion.v1.IngestionInvocation
-import dev.restate.integration.client.StreamDefaults
+import dev.restate.integration.Invocation
+import dev.restate.integration.InvocationMetadata
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.serialization.Deserializer
 
 /**
- * Maps a Kafka source record to a Restate ingestion [IngestionInvocation], and owns how Kafka bytes
- * become that invocation: it declares the [Deserializer]s for its key/value types, so the
- * consumer's deserialization (and thus [K]/[V]) is driven by the mapper. Swap in a custom
- * implementation via `restate.record.mapper.class`; configure it via `restate.record.mapper.*`.
+ * Maps a Kafka source record to a Restate ingestion [Invocation], and owns how Kafka bytes become
+ * that invocation: it declares the [Deserializer]s for its key/value types, so the consumer's
+ * deserialization (and thus [K]/[V]) is driven by the mapper. Swap in a custom implementation via
+ * `restate.record.mapper.class`; configure it via `restate.record.mapper.*`.
+ *
+ * The offset is **not** the mapper's concern: the runtime assigns each invocation the Kafka record
+ * offset (it drives exactly-once dedup), so [toInvocation] only fills in the target, key, payload,
+ * headers, etc.
  */
+@Suppress("UnstableApiUsage")
 interface RecordMapper<K, V> {
 
   /** Deserializer that turns the Kafka record key into a [K]. */
@@ -27,9 +32,9 @@ interface RecordMapper<K, V> {
   /** Deserializer that turns the Kafka record value into a [V]. */
   val valueDeserializer: Class<out Deserializer<V>>
 
-  /** The stream settings (target service/handler, headers, ...) for a new producer stream. */
-  fun initialDefaults(): StreamDefaults
+  /** The stream defaults (target service/handler, headers, ...) applied to every record. */
+  fun initialDefaults(): InvocationMetadata
 
   /** Map one consumed record to an ingestion invocation, or return `null` to filter it out. */
-  fun toInvocation(record: ConsumerRecord<K, V>): IngestionInvocation?
+  fun toInvocation(record: ConsumerRecord<K, V>): Invocation?
 }

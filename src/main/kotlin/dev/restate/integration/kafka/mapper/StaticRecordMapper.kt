@@ -8,9 +8,8 @@
 // https://github.com/restatedev/ingress-integration-kafka/blob/main/LICENSE
 package dev.restate.integration.kafka.mapper
 
-import com.google.protobuf.ByteString
-import dev.restate.ingestion.v1.IngestionInvocation
-import dev.restate.integration.client.StreamDefaults
+import dev.restate.integration.Invocation
+import dev.restate.integration.InvocationMetadata
 import dev.restate.integration.kafka.RecordMapper
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.Configurable
@@ -49,35 +48,33 @@ class StaticRecordMapper : RecordMapper<String, ByteArray>, Configurable {
     kafkaMetadata = configs.kafkaMetadataEnabled()
   }
 
-  override fun initialDefaults(): StreamDefaults =
-      StreamDefaults.newBuilder().setService(targetService).setHandler(targetHandler).build()
+  override fun initialDefaults(): InvocationMetadata =
+      InvocationMetadata.create().setServiceName(targetService).setHandlerName(targetHandler)
 
-  override fun toInvocation(record: ConsumerRecord<String, ByteArray>): IngestionInvocation {
-    val builder =
-        IngestionInvocation.newBuilder()
-            .setOffset(record.offset())
-            .setPayload(record.value()?.let { ByteString.copyFrom(it) } ?: ByteString.EMPTY)
+  override fun toInvocation(record: ConsumerRecord<String, ByteArray>): Invocation {
+    // A null Kafka value (tombstone) clears the body, which the client sends as an empty payload.
+    val invocation = Invocation.create().setBody(record.value())
 
     if (kafkaMetadata) {
-      builder.putKafkaMetadataHeaders(record)
+      invocation.putKafkaMetadataHeaders(record)
     }
 
     record.key()?.let {
       // The VO/Workflow key + a convenience header. A null key means no key (the server rejects it
       // if the target is a virtual object).
-      builder.key = it
-      builder.putAdditionalHeaders("kafka.key", it)
+      invocation.setKey(it)
+      invocation.putHeader("kafka.key", it)
     }
 
     for (header in record.headers()) {
       val value = header.value() ?: continue
       when (header.key()) {
-        TRACEPARENT -> builder.traceparent = String(value, Charsets.UTF_8)
-        TRACESTATE -> builder.tracestate = String(value, Charsets.UTF_8)
+        TRACEPARENT -> invocation.setTraceparent(String(value, Charsets.UTF_8))
+        TRACESTATE -> invocation.setTracestate(String(value, Charsets.UTF_8))
       }
     }
 
-    return builder.build()
+    return invocation
   }
 
   companion object {

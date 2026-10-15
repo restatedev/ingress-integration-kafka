@@ -45,11 +45,11 @@ class JsonDynamicTargetRecordMapperTest {
             "idempotencykey.pointer" to "/id",
             "scope.value" to "orders",
         )
-    // Static fields are Settings defaults, not repeated per record.
-    val settings = m.initialDefaults()
-    assertThat(settings.service).isEqualTo("OrderService")
-    assertThat(settings.scope).isEqualTo("orders")
-    assertThat(settings.hasHandler()).isFalse() // handler is dynamic
+    // Static fields are stream defaults, not repeated per record.
+    val defaults = m.initialDefaults()
+    assertThat(defaults.serviceName).isEqualTo("OrderService")
+    assertThat(defaults.scope).isEqualTo("orders")
+    assertThat(defaults.handlerName).isNull() // handler is dynamic
 
     val invocation =
         m.toInvocation(
@@ -57,50 +57,50 @@ class JsonDynamicTargetRecordMapperTest {
         )
 
     // Dynamic fields are per-record overrides.
-    assertThat(invocation.handler).isEqualTo("create")
+    assertThat(invocation.handlerName).isEqualTo("create")
     assertThat(invocation.key).isEqualTo("cust-1")
     assertThat(invocation.idempotencyKey).isEqualTo("evt-9")
-    // Static fields live in Settings, not on the record.
-    assertThat(invocation.hasService()).isFalse()
-    assertThat(invocation.hasScope()).isFalse()
+    // Static fields live in the defaults, not on the record.
+    assertThat(invocation.serviceName).isNull()
+    assertThat(invocation.scope).isNull()
     // payload is the (re-serialized) JSON, semantically equal to the input
-    assertThat(json.readTree(invocation.payload.toByteArray()))
+    assertThat(json.readTree(invocation.body))
         .isEqualTo(json.readTree("""{"type":"create","id":"evt-9","amount":5}"""))
   }
 
   @Test
-  fun `dynamic fields land on the record, not settings`() {
+  fun `dynamic fields land on the record, not defaults`() {
     val m = mapper("service.pointer" to "/svc", "handler.value" to "greet")
-    assertThat(m.initialDefaults().hasService()).isFalse()
-    assertThat(m.initialDefaults().handler).isEqualTo("greet")
+    assertThat(m.initialDefaults().serviceName).isNull()
+    assertThat(m.initialDefaults().handlerName).isEqualTo("greet")
 
     val invocation = m.toInvocation(record(value = """{"svc":"Dyn"}"""))
-    assertThat(invocation.service).isEqualTo("Dyn")
-    assertThat(invocation.hasHandler()).isFalse() // static -> in settings
+    assertThat(invocation.serviceName).isEqualTo("Dyn")
+    assertThat(invocation.handlerName).isNull() // static -> in defaults
   }
 
   @Test
   fun `omits optional fields when not configured`() {
     val m = mapper("service.value" to "S", "handler.value" to "h")
-    val settings = m.initialDefaults()
-    assertThat(settings.service).isEqualTo("S")
-    assertThat(settings.handler).isEqualTo("h")
+    val defaults = m.initialDefaults()
+    assertThat(defaults.serviceName).isEqualTo("S")
+    assertThat(defaults.handlerName).isEqualTo("h")
 
     val invocation = m.toInvocation(record(key = "k", value = """{"x":1}"""))
-    // static service/handler are Settings defaults, not per-record; optionals stay unset
-    assertThat(invocation.hasService()).isFalse()
-    assertThat(invocation.hasHandler()).isFalse()
-    assertThat(invocation.hasKey()).isFalse()
-    assertThat(invocation.hasIdempotencyKey()).isFalse()
-    assertThat(invocation.hasScope()).isFalse()
-    assertThat(invocation.hasLimitKey()).isFalse()
+    // static service/handler are defaults, not per-record; optionals stay unset
+    assertThat(invocation.serviceName).isNull()
+    assertThat(invocation.handlerName).isNull()
+    assertThat(invocation.key).isNull()
+    assertThat(invocation.idempotencyKey).isNull()
+    assertThat(invocation.scope).isNull()
+    assertThat(invocation.limitKey).isNull()
   }
 
   @Test
   fun `attaches kafka metadata headers by default`() {
     val m = mapper("service.value" to "S", "handler.value" to "h")
     val invocation = m.toInvocation(record(value = """{"x":1}""", offset = 42))
-    assertThat(invocation.additionalHeadersMap)
+    assertThat(invocation.headers)
         .containsEntry("kafka.topic", "t")
         .containsEntry("kafka.partition", "0")
         .containsEntry("kafka.offset", "42")
@@ -111,7 +111,7 @@ class JsonDynamicTargetRecordMapperTest {
   fun `kafka metadata false omits the kafka metadata headers`() {
     val m = mapper("service.value" to "S", "handler.value" to "h", "kafka.metadata" to "false")
     val invocation = m.toInvocation(record(value = """{"x":1}""", offset = 42))
-    assertThat(invocation.additionalHeadersMap)
+    assertThat(invocation.headers)
         .doesNotContainKey("kafka.topic")
         .doesNotContainKey("kafka.partition")
         .doesNotContainKey("kafka.offset")

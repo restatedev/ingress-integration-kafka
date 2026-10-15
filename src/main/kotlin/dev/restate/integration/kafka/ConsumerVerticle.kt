@@ -8,8 +8,10 @@
 // https://github.com/restatedev/ingress-integration-kafka/blob/main/LICENSE
 package dev.restate.integration.kafka
 
-import dev.restate.integration.client.IntegrationClient
-import dev.restate.integration.client.ProducerSession
+import dev.restate.integration.ProducerOptions
+import dev.restate.integration.kafka.ingestion.PartitionSession
+import dev.restate.integration.kafka.ingestion.VertxMultiEndpointProducerFactory
+import dev.restate.integration.version.Version
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.binder.kafka.KafkaClientMetrics
 import io.vertx.kafka.client.common.TopicPartition
@@ -26,24 +28,42 @@ import org.apache.logging.log4j.LogManager
  * partitions across the instances and rebalances automatically.
  *
  * All of an instance's state runs on its single context: the consumer, its assigned
- * [ProducerSession]s and their gRPC streams — so no locking is required.
+ * [PartitionSession]s and their ingestion streams — so no locking is required.
  */
+@Suppress("UnstableApiUsage")
 class ConsumerVerticle(
-    private val appConfig: AppConfig,
+    private val restateKafkaIntegrationConfiguration: RestateKafkaIntegrationConfiguration,
     private val registry: MeterRegistry? = null,
 ) : CoroutineVerticle() {
 
   private val log = LogManager.getLogger(ConsumerVerticle::class.java)
 
-  private lateinit var ingestion: IntegrationClient
+  private lateinit var vertxMultiEndpointProducerFactory: VertxMultiEndpointProducerFactory
+  // Stream defaults (target service/handler/headers) are the same for every partition.
+  private val producerOptions: ProducerOptions =
+      ProducerOptions.builder()
+          .defaultMetadata(restateKafkaIntegrationConfiguration.recordMapper.initialDefaults())
+          .build()
+
   private lateinit var consumer: KafkaConsumer<Any?, Any?>
-  private val partitions = HashMap<TopicPartition, ProducerSession>()
+  private val partitions = HashMap<TopicPartition, PartitionSession>()
   // Native Kafka consumer metrics binder (kafka.consumer.*); closed with the consumer.
   private var kafkaClientMetrics: AutoCloseable? = null
 
   override suspend fun start() {
-    ingestion = IntegrationClient.connect(vertx, appConfig.restate.ingress)
-    consumer = KafkaConsumer.create<Any, Any>(vertx, appConfig.kafkaConsumerConfig)
+    vertxMultiEndpointProducerFactory =
+        VertxMultiEndpointProducerFactory(
+            vertx,
+            restateKafkaIntegrationConfiguration.restate.ingress,
+            integrationName = "kafka",
+            integrationVersion = "${Version.VERSION}_${Version.GIT_HASH}",
+        )
+
+    consumer =
+        KafkaConsumer.create<Any, Any>(
+            vertx,
+            restateKafkaIntegrationConfiguration.kafkaConsumerConfig,
+        )
     kafkaClientMetrics = registry?.let { r ->
       KafkaClientMetrics(consumer.unwrap()).also { it.bindTo(r) }
     }
@@ -57,11 +77,12 @@ class ConsumerVerticle(
         log.debug("dropping record for unassigned partition {}", tp)
       } else {
         // A null mapping means the mapper filtered the record out: skip it (don't send it on).
-        val invocation = appConfig.recordMapper.toInvocation(record.record())
+        val invocation =
+            restateKafkaIntegrationConfiguration.recordMapper.toInvocation(record.record())
         if (invocation == null) {
           log.trace("record mapper filtered out record {}@{}", tp, record.offset())
         } else {
-          session.offer(invocation)
+          session.offer(record.offset(), invocation)
         }
       }
     }
@@ -71,11 +92,11 @@ class ConsumerVerticle(
     }
     consumer.exceptionHandler { log.error("kafka consumer error", it) }
 
-    consumer.subscribe(appConfig.restate.topics.toSet()).coAwait()
+    consumer.subscribe(restateKafkaIntegrationConfiguration.restate.topics.toSet()).coAwait()
     log.info(
         "consumer instance subscribed to {} as group '{}'",
-        appConfig.restate.topics,
-        appConfig.groupId,
+        restateKafkaIntegrationConfiguration.restate.topics,
+        restateKafkaIntegrationConfiguration.groupId,
     )
   }
 
@@ -85,7 +106,7 @@ class ConsumerVerticle(
 
     // Close all producer sessions
     sessions.forEach { it.close() }
-    if (::ingestion.isInitialized) ingestion.close()
+    if (::vertxMultiEndpointProducerFactory.isInitialized) vertxMultiEndpointProducerFactory.close()
 
     // Close Kafka consumer
     kafkaClientMetrics?.close()
@@ -94,15 +115,16 @@ class ConsumerVerticle(
 
   private fun openPartition(tp: TopicPartition) {
     if (partitions.containsKey(tp)) return
-    val producerId = "${appConfig.groupId}/${tp.topic}/${tp.partition}"
+    val producerId = "${restateKafkaIntegrationConfiguration.groupId}/${tp.topic}/${tp.partition}"
     val session =
-        ProducerSession(
-            client = ingestion,
+        PartitionSession(
+            factory = vertxMultiEndpointProducerFactory,
             producerId = producerId,
+            options = producerOptions,
             control = controlFor(tp),
-            retryPolicy = appConfig.restate.retryPolicy,
+            retryPolicy = restateKafkaIntegrationConfiguration.restate.retryPolicy,
             listener =
-                object : ProducerSession.Listener {
+                object : PartitionSession.Listener {
                   override suspend fun onSessionClosed() {
                     log.info("ingestion session for {} closed", tp)
                     closePartition(tp)
@@ -110,7 +132,7 @@ class ConsumerVerticle(
                 },
         )
     partitions[tp] = session
-    session.start(this, appConfig.recordMapper.initialDefaults())
+    session.start(this)
   }
 
   private suspend fun closePartition(tp: TopicPartition) {
@@ -118,7 +140,7 @@ class ConsumerVerticle(
   }
 
   private fun controlFor(tp: TopicPartition) =
-      object : ProducerSession.InboundStreamController {
+      object : PartitionSession.InboundStreamController {
         override fun pause() {
           consumer.pause(tp)
         }

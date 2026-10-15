@@ -35,10 +35,10 @@ class StaticRecordMapperTest {
   }
 
   @Test
-  fun `initialSettings carries the configured target service and handler`() {
-    val settings = mapper.initialDefaults()
-    assertThat(settings.service).isEqualTo("Greeter")
-    assertThat(settings.handler).isEqualTo("greet")
+  fun `initialDefaults carries the configured target service and handler`() {
+    val defaults = mapper.initialDefaults()
+    assertThat(defaults.serviceName).isEqualTo("Greeter")
+    assertThat(defaults.handlerName).isEqualTo("greet")
   }
 
   @Test
@@ -53,7 +53,7 @@ class StaticRecordMapperTest {
 
   @Test
   fun `maps key, value and kafka metadata headers`() {
-    val record =
+    val inv =
         mapper.toInvocation(
             record(
                 topic = "orders",
@@ -64,10 +64,9 @@ class StaticRecordMapperTest {
             )
         )
 
-    assertThat(record.offset).isEqualTo(42L)
-    assertThat(record.key).isEqualTo("customer-7")
-    assertThat(record.payload.toStringUtf8()).isEqualTo("hello")
-    assertThat(record.additionalHeadersMap)
+    assertThat(inv.key).isEqualTo("customer-7")
+    assertThat(String(inv.body)).isEqualTo("hello")
+    assertThat(inv.headers)
         .containsEntry("kafka.topic", "orders")
         .containsEntry("kafka.partition", "3")
         .containsEntry("kafka.offset", "42")
@@ -87,36 +86,35 @@ class StaticRecordMapperTest {
               )
           )
         }
-    val record =
+    val inv =
         m.toInvocation(record(topic = "orders", partition = 3, offset = 42, key = "customer-7"))
 
-    assertThat(record.additionalHeadersMap)
+    assertThat(inv.headers)
         .doesNotContainKey("kafka.topic")
         .doesNotContainKey("kafka.partition")
         .doesNotContainKey("kafka.offset")
         .doesNotContainKey("kafka.timestamp")
     // key handling is independent of the metadata flag
-    assertThat(record.key).isEqualTo("customer-7")
-    assertThat(record.additionalHeadersMap).containsEntry("kafka.key", "customer-7")
+    assertThat(inv.key).isEqualTo("customer-7")
+    assertThat(inv.headers).containsEntry("kafka.key", "customer-7")
   }
 
   @Test
   fun `null key omits the key and its header`() {
-    val record = mapper.toInvocation(record(key = null, value = "v".toByteArray()))
-    assertThat(record.hasKey()).isFalse()
-    assertThat(record.additionalHeadersMap).doesNotContainKey("kafka.key")
+    val inv = mapper.toInvocation(record(key = null, value = "v".toByteArray()))
+    assertThat(inv.key).isNull()
+    assertThat(inv.headers).doesNotContainKey("kafka.key")
   }
 
   @Test
   fun `null value (tombstone) becomes an empty payload`() {
-    val record = mapper.toInvocation(record(offset = 5, key = "k", value = null))
-    assertThat(record.payload.isEmpty).isTrue()
-    assertThat(record.offset).isEqualTo(5L)
+    val inv = mapper.toInvocation(record(offset = 5, key = "k", value = null))
+    assertThat(inv.body).isEmpty()
   }
 
   @Test
   fun `propagates w3c trace context from headers`() {
-    val record =
+    val inv =
         mapper.toInvocation(
             record(
                 key = "k",
@@ -129,7 +127,7 @@ class StaticRecordMapperTest {
                     ),
             )
         )
-    assertThat(record.traceparent).isEqualTo("00-abc-def-01")
-    assertThat(record.tracestate).isEqualTo("rojo=00f")
+    assertThat(inv.traceparent).isEqualTo("00-abc-def-01")
+    assertThat(inv.tracestate).isEqualTo("rojo=00f")
   }
 }
