@@ -31,20 +31,12 @@ repositories {
   mavenCentral()
 }
 
-val vertxVersion = "5.1.5"
-
-// The Restate ingestion client we consume from sdk-java (branch integration-client). It brings the
-// generated ingestion proto/gRPC types transitively (exported as `api`), so we no longer compile
-// our
-// own copy of ingestion_svc.proto.
-val integrationClientVersion = "2.10.0-SNAPSHOT"
-
 // Silence the JDK 24+ "sun.misc.Unsafe::... has been called" warnings: protobuf-java still uses
 // Unsafe for fast (de)serialization. `allow` keeps it working without the per-call-site warning.
 val runtimeJvmArgs = listOf("--sun-misc-unsafe-memory-access=allow")
 
 dependencies {
-  implementation(platform("io.vertx:vertx-stack-depchain:$vertxVersion"))
+  implementation(platform("io.vertx:vertx-stack-depchain:5.2.1"))
 
   implementation("io.vertx:vertx-core")
   implementation("io.vertx:vertx-launcher-application")
@@ -57,7 +49,7 @@ dependencies {
 
   // The Restate ingestion client (ExactlyOnceProducer + IntegrationClient). We supply our own
   // Vert.x-backed io.grpc.Channel, so exclude the sdk's default grpc-netty-shaded transport.
-  implementation("dev.restate:integration-client:$integrationClientVersion") {
+  implementation("dev.restate:integration-client:2.10.0") {
     exclude(group = "io.grpc", module = "grpc-netty-shaded")
   }
 
@@ -73,7 +65,7 @@ dependencies {
 
   // Jackson for JSON-based record mappers (JsonDynamicTargetRecordMapper): JsonNode + JsonPointer.
   // Vert.x ships jackson-core but leaves databind optional, so add it (aligned to Vert.x's 2.21.x).
-  implementation("com.fasterxml.jackson.core:jackson-databind:2.21.5")
+  implementation("com.fasterxml.jackson.core:jackson-databind:2.21.7")
 
   // Logging: our code and Vert.x use the Log4j2 API directly. Kafka hard-depends on SLF4J, so
   // its logs are bridged into Log4j2 too.
