@@ -1,3 +1,8 @@
+import com.github.jk1.license.LicenseReportExtension
+import com.github.jk1.license.ProjectData
+import com.github.jk1.license.filter.LicenseBundleNormalizer
+import com.github.jk1.license.render.InventoryHtmlReportRenderer
+import com.github.jk1.license.render.ReportRenderer
 import com.google.protobuf.gradle.id
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -8,6 +13,7 @@ plugins {
   id("com.google.protobuf") version "0.10.0"
   id("com.google.cloud.tools.jib") version "3.5.3"
   id("com.diffplug.spotless") version "8.8.0"
+  id("com.github.jk1.dependency-license-report") version "3.1.4"
   application
 }
 
@@ -84,6 +90,7 @@ spotless {
   kotlin {
     target("src/**/*.kt")
     ktfmt()
+    licenseHeaderFile("$rootDir/config/license-header")
   }
   kotlinGradle {
     target("*.gradle.kts")
@@ -182,6 +189,105 @@ tasks {
   withType<org.gradle.jvm.tasks.Jar>().configureEach { dependsOn(generateVersionClass) }
 }
 
+// Third-party licenses of what ships in the image (the runtime classpath). `checkLicense` (part of
+// `check`) fails the build when a dependency has no license listed in config/allowed-licenses.json:
+// review the new license before extending that list. `generateLicenseReport` renders the NOTICE
+// shipped in the image plus an HTML inventory, under build/reports/dependency-license/.
+licenseReport {
+  configurations = arrayOf("runtimeClasspath")
+  excludeBoms = true
+  // Platforms that excludeBoms does not catch.
+  excludes = arrayOf("io.vertx:vertx-stack-depchain", "com.google.guava:guava-parent")
+  filters = arrayOf(LicenseBundleNormalizer())
+  allowedLicensesFile = file("config/allowed-licenses.json")
+  renderers = arrayOf(NoticeReportRenderer(), InventoryHtmlReportRenderer())
+}
+
+tasks.check { dependsOn(tasks.checkLicense) }
+
+// NoticeReportRenderer lives in this script, which Gradle doesn't track as an input of the plugin's
+// task: rerun the report whenever the script changes, so the NOTICE is never stale.
+tasks.generateLicenseReport { inputs.file(buildFile) }
+
+/**
+ * Renders the `NOTICE` file shipped in the image: our copyright, every bundled third-party
+ * component with the license(s) its POM declares, and the NOTICE files embedded in those components
+ * reproduced verbatim (Apache License 2.0, section 4(d)), identical ones listed once.
+ */
+class NoticeReportRenderer : ReportRenderer {
+  override fun render(data: ProjectData) {
+    val outputDir =
+        File(
+            data.project.extensions.getByType(LicenseReportExtension::class.java).absoluteOutputDir
+        )
+    val modules = data.allDependencies.sortedBy { "${it.group}:${it.name}:${it.version}" }
+    // Embedded NOTICE text -> the components carrying it.
+    val notices = linkedMapOf<String, MutableList<String>>()
+
+    val text = buildString {
+      appendLine("Restate Kafka ingress integration")
+      appendLine("Copyright (c) 2026 - Restate Software, Inc., Restate GmbH <code@restate.dev>")
+      appendLine()
+      appendLine(
+          "This product is released under the MIT license (see the LICENSE file). It bundles"
+      )
+      appendLine("the third-party components listed below, each under the license(s) shown.")
+      appendSection("Third-party components")
+      for (module in modules) {
+        val coordinates = "${module.group}:${module.name}:${module.version}"
+        val licenses =
+            module.poms
+                .flatMap { it.licenses }
+                .mapNotNull { l -> l.name?.let { if (l.url != null) "$it <${l.url}>" else it } }
+                .ifEmpty { module.manifests.flatMap { it.licenses }.mapNotNull { it.name } }
+                .distinct()
+                .ifEmpty { listOf("Unknown") }
+        appendLine(coordinates)
+        licenses.forEach { appendLine("    $it") }
+        module.licenseFiles
+            .flatMap { it.fileDetails }
+            .map { File(outputDir, it.file) }
+            .filter { it.name.startsWith("NOTICE", ignoreCase = true) }
+            .forEach { notices.getOrPut(it.readText().trim()) { mutableListOf() }.add(coordinates) }
+      }
+      appendSection("Third-party notices")
+      appendLine("The NOTICE files of the bundled components, reproduced verbatim.")
+      for ((notice, owners) in notices) {
+        appendLine()
+        appendLine("-".repeat(80))
+        owners.forEach { appendLine(it) }
+        appendLine("-".repeat(80))
+        appendLine()
+        appendLine(notice)
+      }
+    }
+    File(outputDir, "NOTICE").writeText(text)
+  }
+
+  private fun StringBuilder.appendSection(title: String) {
+    appendLine()
+    appendLine("=".repeat(80))
+    appendLine(title)
+    appendLine("=".repeat(80))
+    appendLine()
+  }
+}
+
+// LICENSE and the generated NOTICE go to the image root (/LICENSE, /NOTICE), as in the restate
+// server image.
+val jibLegalDir = layout.buildDirectory.dir("jib-legal")
+val prepareJibLegalFiles =
+    tasks.register<Sync>("prepareJibLegalFiles") {
+      dependsOn(tasks.generateLicenseReport)
+      from("LICENSE")
+      from("${licenseReport.absoluteOutputDir}/NOTICE")
+      into(jibLegalDir)
+    }
+
+listOf("jib", "jibDockerBuild", "jibBuildTar").forEach {
+  tasks.named(it) { dependsOn(prepareJibLegalFiles) }
+}
+
 // Container image built by Jib (no Docker daemon / Dockerfile needed).
 //   ./gradlew jibBuildTar   -> build to build/jib-image.tar (offline-verifiable)
 //   ./gradlew jibDockerBuild-> build into the local Docker/Podman daemon
@@ -210,5 +316,27 @@ jib {
     extraClasspath = listOf("/app/extra-libs/*")
     // Prometheus scrape endpoint (see RESTATE_METRICS_PORT); informational, does not publish it.
     ports = listOf("9464")
+    // OCI annotations; these also override the base image's (e.g. its Ubuntu version).
+    labels =
+        mapOf(
+            "org.opencontainers.image.title" to "Restate Kafka ingress integration",
+            "org.opencontainers.image.description" to
+                "Bridges the Kafka protocol into Restate, turning Kafka records into Restate invocations",
+            "org.opencontainers.image.version" to version.toString(),
+            "org.opencontainers.image.licenses" to "MIT",
+            "org.opencontainers.image.source" to
+                "https://github.com/restatedev/ingress-integration-kafka",
+            "org.opencontainers.image.vendor" to "Restate Software, Inc., Restate GmbH",
+        )
+  }
+  extraDirectories {
+    paths {
+      // Setting paths replaces the default, so keep src/main/jib (it provides /app/extra-libs).
+      path { setFrom("src/main/jib") }
+      path {
+        setFrom(jibLegalDir)
+        into = "/"
+      }
+    }
   }
 }

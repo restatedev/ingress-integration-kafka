@@ -14,10 +14,12 @@ ships as a container built with Jib. User-facing docs live in [`README.md`](READ
 ## Commands
 
 ```bash
-./gradlew build            # compile + test + spotless check
+./gradlew build            # compile + test + spotless check + dependency license check
 ./gradlew test             # run tests (JUnit 5). Unit tests are fast; the e2e test uses Testcontainers
 ./gradlew test --tests 'dev.restate.integration.kafka.mapper.*'   # just the mapper tests
-./gradlew spotlessApply    # format (ktfmt) — CI fails on unformatted code, run before committing
+./gradlew spotlessApply    # format (ktfmt) + license headers — CI fails otherwise, run before committing
+./gradlew checkLicense     # fail if a runtime dependency has no license in config/allowed-licenses.json
+./gradlew generateLicenseReport  # render build/reports/dependency-license/{NOTICE,index.html}
 ./gradlew run              # run locally (needs Kafka + Restate reachable; see env in README)
 ./gradlew jibDockerBuild   # build the container image into the local Docker/Podman daemon
 docker compose up -d       # bring up the full local stack (Kafka + Restate + this service)
@@ -218,6 +220,10 @@ merge/precedence rules.
 ## Conventions
 
 - Kotlin, formatted with **ktfmt** via Spotless; run `./gradlew spotlessApply` before committing.
+  Spotless also adds the MIT license header (`config/license-header`) to every `src/**/*.kt` file.
+- Licensing: the repo is MIT. `checkLicense` (part of `check`) gates new runtime dependencies on
+  `config/allowed-licenses.json`; if it fails, review the new license before extending the list.
+  The image's `/NOTICE` is generated (`NoticeReportRenderer` in `build.gradle.kts`), never committed.
 - Match the surrounding style: rich KDoc on the interesting classes, terse elsewhere.
 - Keep `README.md` and `CONFIGURATION.md` in sync with behavior/config changes.
 - Don't block the Vert.x event loop; keep per-record work (mappers) cheap and non-blocking.
