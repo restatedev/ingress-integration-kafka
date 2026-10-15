@@ -1,3 +1,11 @@
+// Copyright (c) 2026 - Restate Software, Inc., Restate GmbH
+//
+// This file is part of the Restate Kafka ingress integration,
+// which is released under the MIT license.
+//
+// You can find a copy of the license in file LICENSE in the root
+// directory of this repository or package, or at
+// https://github.com/restatedev/ingress-integration-kafka/blob/main/LICENSE
 package dev.restate.integration.kafka.ingestion
 
 import dev.restate.integration.ExactlyOnceProducer
@@ -44,12 +52,12 @@ import org.apache.logging.log4j.LogManager
  * MUST be driven by a scope pinned to a single event-loop context.
  */
 class PartitionSession(
-  private val factory: ProducerFactory,
-  private val producerId: String,
-  private val options: ProducerOptions,
-  private val control: InboundStreamController,
-  private val retryPolicy: RetryPolicy,
-  private val listener: Listener? = null,
+    private val factory: ProducerFactory,
+    private val producerId: String,
+    private val options: ProducerOptions,
+    private val control: InboundStreamController,
+    private val retryPolicy: RetryPolicy,
+    private val listener: Listener? = null,
 ) {
 
   companion object {
@@ -212,8 +220,8 @@ class PartitionSession(
    * and the backoff waited out.
    */
   private suspend fun backoffAndContinue(
-    cause: IntegrationClientException,
-    backoff: RetryPolicy.Iterator,
+      cause: IntegrationClientException,
+      backoff: RetryPolicy.Iterator,
   ): Boolean {
     if (!cause.isRetryable()) {
       LOG.warn("permanent ingestion error for {}", producerId, cause)

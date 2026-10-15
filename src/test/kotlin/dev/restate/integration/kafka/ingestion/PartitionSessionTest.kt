@@ -1,3 +1,11 @@
+// Copyright (c) 2026 - Restate Software, Inc., Restate GmbH
+//
+// This file is part of the Restate Kafka ingress integration,
+// which is released under the MIT license.
+//
+// You can find a copy of the license in file LICENSE in the root
+// directory of this repository or package, or at
+// https://github.com/restatedev/ingress-integration-kafka/blob/main/LICENSE
 package dev.restate.integration.kafka.ingestion
 
 import dev.restate.integration.ExactlyOnceProducer
@@ -336,7 +344,7 @@ private fun record(offset: Long): Invocation =
         .setBody("payload-$offset".toByteArray())
 
 private fun fastRetry(maxAttempts: Int? = null) =
-  RetryPolicy(initialInterval = 1.milliseconds, maxAttempts = maxAttempts)
+    RetryPolicy(initialInterval = 1.milliseconds, maxAttempts = maxAttempts)
 
 private class Env(val scope: TestScope, retry: RetryPolicy) {
   val factory = FakeFactory()

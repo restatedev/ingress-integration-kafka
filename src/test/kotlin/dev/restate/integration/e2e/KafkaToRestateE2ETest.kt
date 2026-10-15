@@ -8,8 +8,8 @@
 // https://github.com/restatedev/ingress-integration-kafka/blob/main/LICENSE
 package dev.restate.integration.e2e
 
-import dev.restate.integration.kafka.RestateKafkaIntegrationConfiguration
 import dev.restate.integration.kafka.ConsumerVerticle
+import dev.restate.integration.kafka.RestateKafkaIntegrationConfiguration
 import io.vertx.core.Vertx
 import java.net.URI
 import java.net.http.HttpClient

@@ -1,3 +1,11 @@
+// Copyright (c) 2026 - Restate Software, Inc., Restate GmbH
+//
+// This file is part of the Restate Kafka ingress integration,
+// which is released under the MIT license.
+//
+// You can find a copy of the license in file LICENSE in the root
+// directory of this repository or package, or at
+// https://github.com/restatedev/ingress-integration-kafka/blob/main/LICENSE
 package dev.restate.integration.kafka
 
 import io.micrometer.core.instrument.MeterRegistry
@@ -23,14 +31,14 @@ import org.apache.logging.log4j.LogManager
  *
  * This class is meant to be used in the main class of a uber-jar.
  */
-class RestateKafkaIntegration private constructor(private val config: RestateKafkaIntegrationConfiguration) {
+class RestateKafkaIntegration
+private constructor(private val config: RestateKafkaIntegrationConfiguration) {
 
   private val hooks = ConsumerApplication(config)
 
   /**
-   * Start the integration.
-   * Returns the launcher exit code (0 = deployed successfully);
-   * a startup failure terminates the JVM, exactly as the standalone launcher does.
+   * Start the integration. Returns the launcher exit code (0 = deployed successfully); a startup
+   * failure terminates the JVM, exactly as the standalone launcher does.
    */
   fun run(): Int {
     // Route Vert.x's (and the launcher's own) logging to Log4j2 so startup/deploy errors are
@@ -50,10 +58,12 @@ class RestateKafkaIntegration private constructor(private val config: RestateKaf
 
   companion object {
     /** Build loaded [RestateKafkaIntegrationConfiguration]. */
-    fun fromConfig(config: RestateKafkaIntegrationConfiguration): RestateKafkaIntegration = RestateKafkaIntegration(config)
+    fun fromConfig(config: RestateKafkaIntegrationConfiguration): RestateKafkaIntegration =
+        RestateKafkaIntegration(config)
   }
 
-  private class ConsumerApplication(private val config: RestateKafkaIntegrationConfiguration) : VertxApplicationHooks {
+  private class ConsumerApplication(private val config: RestateKafkaIntegrationConfiguration) :
+      VertxApplicationHooks {
 
     private val log = LogManager.getLogger(RestateKafkaIntegration::class.java)
 

@@ -155,7 +155,9 @@ class RestateKafkaIntegrationConfigurationTest {
     val existing = writeProps(dir, "a.properties", "a=1")
     val missing = dir.resolve("nope.properties").toString()
 
-    assertThatThrownBy { RestateKafkaIntegrationConfiguration.loadPropertiesFiles("$existing,$missing") }
+    assertThatThrownBy {
+          RestateKafkaIntegrationConfiguration.loadPropertiesFiles("$existing,$missing")
+        }
         .isInstanceOf(IllegalArgumentException::class.java)
         .hasMessageContaining("missing file")
         .hasMessageContaining(missing)
@@ -185,7 +187,8 @@ class RestateKafkaIntegrationConfigurationTest {
   fun `honours RESTATE_KAFKA_CONSUMER_INSTANCES override`() {
     val env = baseEnv()
     env["RESTATE_KAFKA_CONSUMER_INSTANCES"] = "3"
-    assertThat(RestateKafkaIntegrationConfiguration.load(env).restate.consumerInstances).isEqualTo(3)
+    assertThat(RestateKafkaIntegrationConfiguration.load(env).restate.consumerInstances)
+        .isEqualTo(3)
   }
 
   @Test
@@ -208,7 +211,9 @@ class RestateKafkaIntegrationConfigurationTest {
   @Test
   fun `rejects an out-of-range metrics port`() {
     assertThatThrownBy {
-          RestateKafkaIntegrationConfiguration.load(baseEnv().apply { this["RESTATE_METRICS_PORT"] = "70000" })
+          RestateKafkaIntegrationConfiguration.load(
+              baseEnv().apply { this["RESTATE_METRICS_PORT"] = "70000" }
+          )
         }
         .isInstanceOf(IllegalArgumentException::class.java)
   }
@@ -240,12 +245,16 @@ class RestateKafkaIntegrationConfigurationTest {
   @Test
   fun `rejects missing target service and handler`() {
     assertThatThrownBy {
-          RestateKafkaIntegrationConfiguration.load(baseEnv().apply { remove("RESTATE_RECORD_MAPPER_SERVICE") })
+          RestateKafkaIntegrationConfiguration.load(
+              baseEnv().apply { remove("RESTATE_RECORD_MAPPER_SERVICE") }
+          )
         }
         .isInstanceOf(IllegalArgumentException::class.java)
         .hasMessageContaining("restate.record.mapper.service")
     assertThatThrownBy {
-          RestateKafkaIntegrationConfiguration.load(baseEnv().apply { remove("RESTATE_RECORD_MAPPER_HANDLER") })
+          RestateKafkaIntegrationConfiguration.load(
+              baseEnv().apply { remove("RESTATE_RECORD_MAPPER_HANDLER") }
+          )
         }
         .isInstanceOf(IllegalArgumentException::class.java)
         .hasMessageContaining("restate.record.mapper.handler")
@@ -262,11 +271,15 @@ class RestateKafkaIntegrationConfigurationTest {
   @Test
   fun `rejects non-integer and non-positive instance counts`() {
     assertThatThrownBy {
-          RestateKafkaIntegrationConfiguration.load(baseEnv().apply { this["RESTATE_KAFKA_CONSUMER_INSTANCES"] = "abc" })
+          RestateKafkaIntegrationConfiguration.load(
+              baseEnv().apply { this["RESTATE_KAFKA_CONSUMER_INSTANCES"] = "abc" }
+          )
         }
         .isInstanceOf(IllegalArgumentException::class.java)
     assertThatThrownBy {
-          RestateKafkaIntegrationConfiguration.load(baseEnv().apply { this["RESTATE_KAFKA_CONSUMER_INSTANCES"] = "0" })
+          RestateKafkaIntegrationConfiguration.load(
+              baseEnv().apply { this["RESTATE_KAFKA_CONSUMER_INSTANCES"] = "0" }
+          )
         }
         .isInstanceOf(IllegalArgumentException::class.java)
   }

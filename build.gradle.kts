@@ -3,7 +3,6 @@ import com.github.jk1.license.ProjectData
 import com.github.jk1.license.filter.LicenseBundleNormalizer
 import com.github.jk1.license.render.InventoryHtmlReportRenderer
 import com.github.jk1.license.render.ReportRenderer
-import com.google.protobuf.gradle.id
 import java.io.File
 import java.util.concurrent.TimeUnit
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile

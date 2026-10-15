@@ -9,8 +9,8 @@
 package dev.restate.integration.kafka
 
 import dev.restate.integration.ProducerOptions
-import dev.restate.integration.kafka.ingestion.VertxMultiEndpointProducerFactory
 import dev.restate.integration.kafka.ingestion.PartitionSession
+import dev.restate.integration.kafka.ingestion.VertxMultiEndpointProducerFactory
 import dev.restate.integration.version.Version
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.binder.kafka.KafkaClientMetrics
@@ -32,8 +32,8 @@ import org.apache.logging.log4j.LogManager
  */
 @Suppress("UnstableApiUsage")
 class ConsumerVerticle(
-  private val restateKafkaIntegrationConfiguration: RestateKafkaIntegrationConfiguration,
-  private val registry: MeterRegistry? = null,
+    private val restateKafkaIntegrationConfiguration: RestateKafkaIntegrationConfiguration,
+    private val registry: MeterRegistry? = null,
 ) : CoroutineVerticle() {
 
   private val log = LogManager.getLogger(ConsumerVerticle::class.java)
@@ -41,7 +41,9 @@ class ConsumerVerticle(
   private lateinit var vertxMultiEndpointProducerFactory: VertxMultiEndpointProducerFactory
   // Stream defaults (target service/handler/headers) are the same for every partition.
   private val producerOptions: ProducerOptions =
-      ProducerOptions.builder().defaultMetadata(restateKafkaIntegrationConfiguration.recordMapper.initialDefaults()).build()
+      ProducerOptions.builder()
+          .defaultMetadata(restateKafkaIntegrationConfiguration.recordMapper.initialDefaults())
+          .build()
 
   private lateinit var consumer: KafkaConsumer<Any?, Any?>
   private val partitions = HashMap<TopicPartition, PartitionSession>()
@@ -57,7 +59,11 @@ class ConsumerVerticle(
             integrationVersion = "${Version.VERSION}_${Version.GIT_HASH}",
         )
 
-    consumer = KafkaConsumer.create<Any, Any>(vertx, restateKafkaIntegrationConfiguration.kafkaConsumerConfig)
+    consumer =
+        KafkaConsumer.create<Any, Any>(
+            vertx,
+            restateKafkaIntegrationConfiguration.kafkaConsumerConfig,
+        )
     kafkaClientMetrics = registry?.let { r ->
       KafkaClientMetrics(consumer.unwrap()).also { it.bindTo(r) }
     }
@@ -71,7 +77,8 @@ class ConsumerVerticle(
         log.debug("dropping record for unassigned partition {}", tp)
       } else {
         // A null mapping means the mapper filtered the record out: skip it (don't send it on).
-        val invocation = restateKafkaIntegrationConfiguration.recordMapper.toInvocation(record.record())
+        val invocation =
+            restateKafkaIntegrationConfiguration.recordMapper.toInvocation(record.record())
         if (invocation == null) {
           log.trace("record mapper filtered out record {}@{}", tp, record.offset())
         } else {
