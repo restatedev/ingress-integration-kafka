@@ -144,11 +144,11 @@ Logging is Log4j2; point it at your own config with `-Dlog4j2.configurationFile=
 
 Some settings are JVM flags or system properties (`-D...`) rather than Kafka or Restate
 config, so they can't be set through `KAFKA_*` / `RESTATE_*` or the properties file. Pass them with
-the standard `JAVA_TOOL_OPTIONS` environment variable, which the JVM picks up on startup (it logs
-`Picked up JAVA_TOOL_OPTIONS: ...` to stderr):
+the standard `JDK_JAVA_OPTIONS` environment variable, which the `java` launcher picks up on startup
+(it logs `NOTE: Picked up JDK_JAVA_OPTIONS: ...` to stderr):
 
 ```.dotenv
-JAVA_TOOL_OPTIONS=-Xmx1g -Dlog4j2.configurationFile=/config/log4j2.xml
+JDK_JAVA_OPTIONS=-Xmx1g -Dlog4j2.configurationFile=/config/log4j2.xml
 ```
 
 These are added to the image's built-in flags, so you don't need to repeat them.
@@ -158,7 +158,7 @@ to call a token endpoint unless it is allow-listed via the `org.apache.kafka.sas
 system property (comma-separated; empty by default, which blocks every URL):
 
 ```.dotenv
-JAVA_TOOL_OPTIONS=-Dorg.apache.kafka.sasl.oauthbearer.allowed.urls=https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token
+JDK_JAVA_OPTIONS=-Dorg.apache.kafka.sasl.oauthbearer.allowed.urls=https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token
 KAFKA_SECURITY_PROTOCOL=SASL_SSL
 KAFKA_SASL_MECHANISM=OAUTHBEARER
 KAFKA_SASL_LOGIN_CALLBACK_HANDLER_CLASS=org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginCallbackHandler
