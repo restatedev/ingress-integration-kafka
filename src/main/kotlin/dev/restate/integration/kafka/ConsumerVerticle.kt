@@ -49,11 +49,25 @@ class ConsumerVerticle(
           .build()
 
   private lateinit var consumer: KafkaConsumer<Any?, Any?>
+  // The native consumer [consumer] wraps. The wrapper only closes it once subscribe() was called
+  // (that starts the wrapper's worker thread, which then owns it); before that, we close it.
+  private var nativeConsumer: NativeKafkaConsumer<Any?, Any?>? = null
+  private var subscribeCalled = false
   private val partitions = HashMap<TopicPartition, PartitionSession>()
   // Native Kafka consumer metrics binder (kafka.consumer.*); closed with the consumer.
   private var kafkaClientMetrics: AutoCloseable? = null
 
   override suspend fun start() {
+    try {
+      open()
+    } catch (e: Throwable) {
+      // Vert.x doesn't call stop() for a verticle whose start() failed: release what we opened.
+      runCatching { stop() }.exceptionOrNull()?.let(e::addSuppressed)
+      throw e
+    }
+  }
+
+  private suspend fun open() {
     vertxMultiEndpointProducerFactory =
         VertxMultiEndpointProducerFactory(
             vertx,
@@ -65,10 +79,10 @@ class ConsumerVerticle(
     // Constructing the native consumer can block, e.g. SASL/OAUTHBEARER (OIDC) fetches the initial
     // token from the identity provider (with retries) during login. Build it off the event loop.
     val config: Map<String, Any> = restateKafkaIntegrationConfiguration.kafkaConsumerConfig
-    val nativeConsumer =
+    val native =
         vertx.executeBlocking(Callable { NativeKafkaConsumer<Any?, Any?>(config) }).coAwait()
-    consumer =
-        KafkaConsumer.create(vertx, nativeConsumer, KafkaClientOptions.fromMap(config, false))
+    nativeConsumer = native
+    consumer = KafkaConsumer.create(vertx, native, KafkaClientOptions.fromMap(config, false))
     kafkaClientMetrics = registry?.let { r ->
       KafkaClientMetrics(consumer.unwrap()).also { it.bindTo(r) }
     }
@@ -97,6 +111,7 @@ class ConsumerVerticle(
     }
     consumer.exceptionHandler { log.error("kafka consumer error", it) }
 
+    subscribeCalled = true
     consumer.subscribe(restateKafkaIntegrationConfiguration.restate.topics.toSet()).coAwait()
     log.info(
         "consumer instance subscribed to {} as group '{}'",
@@ -115,7 +130,11 @@ class ConsumerVerticle(
 
     // Close Kafka consumer
     kafkaClientMetrics?.close()
-    if (::consumer.isInitialized) consumer.close().coAwait()
+    if (subscribeCalled) consumer.close().coAwait()
+    else
+        nativeConsumer?.let { native ->
+          vertx.executeBlocking(Callable { native.close() }).coAwait()
+        }
   }
 
   private fun openPartition(tp: TopicPartition) {
