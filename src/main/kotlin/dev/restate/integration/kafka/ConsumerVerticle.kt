@@ -14,12 +14,15 @@ import dev.restate.integration.kafka.ingestion.VertxMultiEndpointProducerFactory
 import dev.restate.integration.version.Version
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.binder.kafka.KafkaClientMetrics
+import io.vertx.kafka.client.common.KafkaClientOptions
 import io.vertx.kafka.client.common.TopicPartition
 import io.vertx.kafka.client.consumer.KafkaConsumer
 import io.vertx.kafka.client.consumer.OffsetAndMetadata
 import io.vertx.kotlin.coroutines.CoroutineVerticle
 import io.vertx.kotlin.coroutines.coAwait
+import java.util.concurrent.Callable
 import kotlinx.coroutines.launch
+import org.apache.kafka.clients.consumer.KafkaConsumer as NativeKafkaConsumer
 import org.apache.logging.log4j.LogManager
 
 /**
@@ -59,11 +62,13 @@ class ConsumerVerticle(
             integrationVersion = "${Version.VERSION}_${Version.GIT_HASH}",
         )
 
+    // Constructing the native consumer can block, e.g. SASL/OAUTHBEARER (OIDC) fetches the initial
+    // token from the identity provider (with retries) during login. Build it off the event loop.
+    val config: Map<String, Any> = restateKafkaIntegrationConfiguration.kafkaConsumerConfig
+    val nativeConsumer =
+        vertx.executeBlocking(Callable { NativeKafkaConsumer<Any?, Any?>(config) }).coAwait()
     consumer =
-        KafkaConsumer.create<Any, Any>(
-            vertx,
-            restateKafkaIntegrationConfiguration.kafkaConsumerConfig,
-        )
+        KafkaConsumer.create(vertx, nativeConsumer, KafkaClientOptions.fromMap(config, false))
     kafkaClientMetrics = registry?.let { r ->
       KafkaClientMetrics(consumer.unwrap()).also { it.bindTo(r) }
     }

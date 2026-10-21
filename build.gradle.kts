@@ -43,6 +43,10 @@ dependencies {
   // which we feed to the sdk-java ingestion client so the transport runs on the Vert.x event loop.
   implementation("io.vertx:vertx-grpcio-client")
   implementation("io.vertx:vertx-kafka-client")
+  // kafka-clients' built-in SASL/OAUTHBEARER OIDC login handler (OAuthBearerLoginCallbackHandler)
+  // needs jose4j, but kafka-clients doesn't declare it. Pinned to kafka-clients 4.2.0's version.
+  // Drop once https://issues.apache.org/jira/browse/KAFKA-20184 ships.
+  runtimeOnly("org.bitbucket.b_c:jose4j:0.9.6")
   implementation("io.vertx:vertx-lang-kotlin")
   implementation("io.vertx:vertx-lang-kotlin-coroutines")
 
