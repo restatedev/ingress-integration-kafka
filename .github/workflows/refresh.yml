@@ -1,0 +1,95 @@
+# Rebuilds published release images with an up-to-date base image (eclipse-temurin) to include the
+# latest OS and JRE security updates without waiting for a new release.
+#
+# Rebuilds the latest patch release of the two most recent minor versions with Jib from its release
+# tag, pushes it with a date-suffixed tag (e.g., 0.1.1-20261026), updates the version tag, and
+# updates "latest" for the most recent minor version.
+name: Refresh image
+
+on:
+  schedule:
+    # Run weekly on Mondays at 00:00 UTC
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+
+# `shell: bash` runs steps with `-eo pipefail`, unlike the default `bash -e`
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/restatedev/ingress-integration-kafka
+
+jobs:
+  refresh:
+    name: Refresh (minor version offset ${{ matrix.minor-offset }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 0 = most recent minor version, 1 = previous minor version
+        minor-offset: [0, 1]
+    steps:
+      - name: Determine release
+        id: release
+        run: |
+          # Latest patch release of the requested minor version, from the vX.Y.Z release tags
+          VERSION=$(git ls-remote --tags --refs "${{ github.server_url }}/${{ github.repository }}" 'v*' | \
+            sed -n 's|.*refs/tags/v\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\)$|\1|p' | sort -rV | \
+            awk -F. '!seen[$1 "." $2]++' | sed -n "$(( ${{ matrix.minor-offset }} + 1 ))p")
+          echo "Release to refresh: ${VERSION:-none}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - uses: actions/checkout@v6
+        if: steps.release.outputs.version != ''
+        with:
+          ref: v${{ steps.release.outputs.version }}
+
+      - name: Set up JDK 25
+        if: steps.release.outputs.version != ''
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        if: steps.release.outputs.version != ''
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Log in to GHCR
+        if: steps.release.outputs.version != ''
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        if: steps.release.outputs.version != ''
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: |
+            latest=${{ matrix.minor-offset == 0 }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{version}},value=${{ steps.release.outputs.version }},suffix=-{{date 'YYYYMMDD'}}
+
+      # Same build as publish.yml
+      - name: Build image with Jib into the Docker daemon
+        if: steps.release.outputs.version != ''
+        run: |
+          JIB_TAGS=$(printf '%s\n' '${{ steps.meta.outputs.tags }}' | sed 's#.*:##' | paste -sd, -)
+          ./gradlew jibDockerBuild \
+            -Djib.to.image=${{ env.IMAGE }}:${{ steps.release.outputs.version }} \
+            -Djib.to.tags="$JIB_TAGS" \
+            -Pversion=${{ steps.release.outputs.version }}
+
+      - name: Push image to GHCR
+        if: steps.release.outputs.version != ''
+        run: docker push --all-tags ${{ env.IMAGE }}
